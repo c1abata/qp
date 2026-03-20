@@ -3,6 +3,7 @@
 Automated network hygiene & security analysis suite per Raspberry Pi / Debian.
 Ispirata ai principi di **antirez**: semplicità, chiarezza, zero magia nascosta.
 
+
 ---
 
 ## Struttura
@@ -170,6 +171,15 @@ sudo python3 /opt/net_audit/net_audit.py --tasks HYGIENE
 
 # Combinazione selettiva
 sudo python3 /opt/net_audit/net_audit.py --tasks NET,HYGIENE,DNS
+
+
+
+# Config HW Bluethoot
+
+sudo apt update
+sudo apt install -y bluez obexftp
+sudo systemctl enable bluetooth
+sudo systemctl start bluetooth
 
 # Override interfaccia e target esterno
 sudo python3 /opt/net_audit/net_audit.py --iface eth0 --target 8.8.8.8
