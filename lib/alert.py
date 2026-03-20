@@ -1,12 +1,12 @@
+#!/usr/bin/env python3
 """
-lib/alert.py - Sistema di alerting modulare.
+lib/alert.py - Sistema di alerting modulare (Telegram + Bluetooth fallback)
 
 Design:
-  - Alerter è un oggetto passato a ogni task.
-  - Ogni task chiama alerter.finding(area, msg) per i risultati rilevanti.
-  - Livelli: info, warning, critical, error.
-  - Se Telegram fallisce, accoda localmente e riprova.
-  - Un decoratore @alertable rende qualunque funzione "notificabile" in 3 righe.
+- Tutti i task usano Alerter
+- Telegram è canale principale
+- Bluetooth è fallback immediato se Telegram fallisce
+- Retry queue persistente
 """
 
 import logging
@@ -15,9 +15,10 @@ import json
 import time
 import requests
 
+from lib.bluetooth_alert import BluetoothAlerter
+
 log = logging.getLogger(__name__)
 
-# Emoji per livello
 LEVEL_ICON = {
     "info":     "ℹ️",
     "warning":  "⚠️",
@@ -30,95 +31,155 @@ RETRY_FILE = "/var/log/net_audit/pending_alerts.json"
 
 
 class Alerter:
-    """
-    Oggetto condiviso tra tutti i task.
-    Uso:
-        alerter.finding("NET", "Host sconosciuto trovato: 10.0.0.99", level="warning")
-        alerter.send("Messaggio libero", level="info")
-    """
 
     def __init__(self, cfg):
-        self.token   = cfg.get("Telegram", "bot_token",  fallback="")
-        self.chat_id = cfg.get("Telegram", "chat_id",    fallback="")
+        # Telegram
+        self.token   = cfg.get("Telegram", "bot_token", fallback="")
+        self.chat_id = cfg.get("Telegram", "chat_id", fallback="")
         self.enabled = bool(self.token and self.chat_id)
-        self._flush_pending()   # riprova alert in coda dal run precedente
+
+        # Bluetooth
+        bt_mac = cfg.get("Bluetooth", "device_mac", fallback="")
+        self.bt = BluetoothAlerter(bt_mac) if bt_mac else None
+
+        # Anti-duplicate (runtime)
+        self._sent_cache = set()
+
+        # Retry queue flush
+        self._flush_pending()
 
     # ------------------------------------------------------------------
-    # API pubblica
+    # API
     # ------------------------------------------------------------------
 
     def finding(self, area: str, message: str, level: str = "warning"):
-        """Notifica un singolo finding da un'area specifica."""
         icon = LEVEL_ICON.get(level, "•")
         text = f"{icon} *[{area}]* {message}"
         log.warning(f"FINDING [{area}] {message}")
-        self.send(text, level=level)
+        self.send(text, level)
 
     def send(self, message: str, level: str = "info"):
-        """Invia un messaggio Telegram. Su failure, accoda per retry."""
-        if not self.enabled:
-            log.info(f"[ALERT-disabled] {message}")
+        """
+        Invio multi-canale:
+        1. Telegram
+        2. Se fallisce → enqueue + Bluetooth
+        3. Se Telegram non configurato → Bluetooth diretto
+        """
+
+        # Anti-duplicate
+        if message in self._sent_cache:
             return
-        success = self._telegram_send(message)
-        if not success:
+        self._sent_cache.add(message)
+
+        # --- TELEGRAM ---
+        if self.enabled:
+            success = self._telegram_send(message)
+
+            if success:
+                return
+
+            # fallback
+            log.warning("Telegram fallito → fallback Bluetooth")
             self._enqueue(message)
 
+            if self.bt:
+                self._bluetooth_send(message)
+            return
+
+        # --- SOLO BLUETOOTH ---
+        log.info("Telegram disabilitato → uso Bluetooth")
+        if self.bt:
+            self._bluetooth_send(message)
+
     def ok(self, area: str, message: str):
-        """Shortcut per risultato pulito (opzionale, riduce il rumore)."""
-        # Di default non inviamo gli "ok" per non spammare.
         log.info(f"OK [{area}] {message}")
 
     # ------------------------------------------------------------------
-    # Interno
+    # TELEGRAM
     # ------------------------------------------------------------------
 
     def _telegram_send(self, text: str, retries: int = 2) -> bool:
         url = f"https://api.telegram.org/bot{self.token}/sendMessage"
+
         payload = {
-            "chat_id":    self.chat_id,
-            "text":       text,
-            "parse_mode": "Markdown",
+            "chat_id": self.chat_id,
+            "text": text,
+            "parse_mode": "Markdown"
         }
+
         for attempt in range(retries):
             try:
                 r = requests.post(url, json=payload, timeout=8)
+
                 if r.status_code == 200:
                     return True
+
                 log.warning(f"Telegram HTTP {r.status_code}: {r.text[:120]}")
+
             except Exception as e:
                 log.warning(f"Telegram tentativo {attempt+1}: {e}")
                 time.sleep(2)
+
         return False
 
+    # ------------------------------------------------------------------
+    # BLUETOOTH
+    # ------------------------------------------------------------------
+
+    def _bluetooth_send(self, message: str):
+        if not self.bt:
+            return
+
+        try:
+            ok = self.bt.send(message)
+
+            if ok:
+                log.info("Alert inviato via Bluetooth")
+            else:
+                log.warning("Bluetooth send fallito")
+
+        except Exception as e:
+            log.error(f"Errore Bluetooth: {e}")
+
+    # ------------------------------------------------------------------
+    # RETRY QUEUE
+    # ------------------------------------------------------------------
+
     def _enqueue(self, message: str):
-        """Salva il messaggio su file per retry al prossimo run."""
         queue = []
+
         if os.path.exists(RETRY_FILE):
             try:
                 queue = json.loads(open(RETRY_FILE).read())
             except Exception:
                 pass
+
         queue.append({"ts": time.time(), "msg": message})
+
         try:
             os.makedirs(os.path.dirname(RETRY_FILE), exist_ok=True)
+
             with open(RETRY_FILE, "w") as f:
                 json.dump(queue, f)
+
         except Exception as e:
             log.error(f"Enqueue fallito: {e}")
 
     def _flush_pending(self):
-        """Al boot, riprova i messaggi accodati."""
         if not os.path.exists(RETRY_FILE):
             return
+
         try:
             queue = json.loads(open(RETRY_FILE).read())
         except Exception:
             return
+
         remaining = []
+
         for item in queue:
             if not self._telegram_send(f"[RETRY] {item['msg']}"):
                 remaining.append(item)
-        # Aggiorna il file
+
         if remaining:
             with open(RETRY_FILE, "w") as f:
                 json.dump(remaining, f)
@@ -127,13 +188,7 @@ class Alerter:
 
 
 # ---------------------------------------------------------------------------
-# Decoratore @alertable
-#
-# Rende qualunque funzione automaticamente notificante in caso di eccezione.
-# Uso:
-#   @alertable("NET", alerter)
-#   def my_check():
-#       ...  # se solleva, alerter.finding("NET", str(exc), "error")
+# Decoratore
 # ---------------------------------------------------------------------------
 
 def alertable(area: str, alerter: Alerter):
