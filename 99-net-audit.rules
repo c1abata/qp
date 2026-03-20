@@ -1,0 +1,15 @@
+# /etc/udev/rules.d/99-net-audit.rules
+# Avvia net_audit quando un cavo Ethernet viene collegato
+# e l'interfaccia sale a "up" con carrier.
+#
+# Funziona su: eth0, eth1, enp*, ens* (qualsiasi eth fisico)
+# Non si attiva su: loopback (lo), bridge, vlan, wlan
+
+ACTION=="add", SUBSYSTEM=="net", \
+  KERNEL!="lo", KERNEL!="br*", KERNEL!="vlan*", KERNEL!="wlan*", \
+  RUN+="/bin/systemctl start net_audit.service"
+
+ACTION=="change", SUBSYSTEM=="net", \
+  KERNEL!="lo", KERNEL!="br*", KERNEL!="vlan*", KERNEL!="wlan*", \
+  ATTR{carrier}=="1", \
+  RUN+="/bin/systemctl start net_audit.service"
