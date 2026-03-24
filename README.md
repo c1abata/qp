@@ -120,6 +120,10 @@ ACTION=="change", SUBSYSTEM=="net",
 lancia il service. L'audit parte appena la NIC ha link, prima ancora che
 DHCP completi — nic.py attende i parametri con retry automatico.
 
+
+### FAILBACK BLUETOOTH
+
+
 ### Meccanismo 2 — systemd `network-online.target` (stabile, post-DHCP)
 
 Il service è dichiarato `After=network-online.target` e `BindsTo=network-online.target`,
