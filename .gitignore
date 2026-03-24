@@ -1,38 +1,39 @@
-# 🔸 Ambiente virtuale
+#  Ambiente virtuale
 venv/
 .env/
 
-# 🔸 Cache Python
+#  Cache Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.ini
 
-# 🔸 File di configurazione sensibili
+#  File di configurazione sensibili
 .env
 *.env
 secrets.json
 config.yaml
 
-# 🔸 VS Code
+#  VS Code
 .vscode/
 
-# 🔸 Sistema operativo
+#  Sistema operativo
 .DS_Store
 Thumbs.db
 
-# 🔸 Log e debug
+#  Log e debug
 *.log
 
-# 🔸 Database locali
+#  Database locali
 *.sqlite3
 
-# 🔸 Build / distribuzione
+#  Build / distribuzione
 dist/
 build/
 *.egg-info/
 
-# 🔸 Test / coverage
+# Test / coverage
 .coverage
 htmlcov/
 .pytest_cache/
