@@ -3,7 +3,7 @@
 **QuickPeek** è uno strumento per l'analisi di sistema/rete, progettato per essere veloce, modulare e facilmente estendibile.
 L'idea è ottenere alcune brevi ma significative ricognizioni sulle subnet private raggiungibili attraverso le NIC.
 Ad esempio raggiungibilità TOR, Controllo del traffico DNS, VLAN, IPv6, ARP scan, MAC spoofing.
-Nel tempo i moduli si sono aggiunti e vengono
+Nel tempo i moduli si sono aggiunti e vengono integrati attraverso le directory task e lib.   
 
 ---
 
