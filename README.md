@@ -21,15 +21,15 @@ Nel tempo i moduli si sono aggiunti e vengono integrati attraverso le directory 
 
 ```
 quickpeek/
-├── main.py
+├── net_audit.py
 ├── config.ini
 ├── lib/
 │   ├── alert.py
 │   ├── bluetooth_alert.py
 │   └── ...
 ├── tasks/
+|   ├── DNS.py 
 │   └── ...
-├── requirements.txt
 └── README.md
 ```
 
