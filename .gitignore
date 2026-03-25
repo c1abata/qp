@@ -75,3 +75,4 @@ secrets.*
 # Build
 dist/
 build/
+*.ini
