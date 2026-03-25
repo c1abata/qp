@@ -1,0 +1,77 @@
+# 🔸 Ambiente virtuale
+venv/
+.env/
+
+# 🔸 Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 🔸 File di configurazione sensibili
+.env
+*.env
+secrets.json
+config.yaml
+
+# 🔸 VS Code
+.vscode/
+
+# 🔸 Sistema operativo
+.DS_Store
+Thumbs.db
+
+# 🔸 Log e debug
+*.log
+
+# 🔸 Database locali
+*.sqlite3
+
+# 🔸 Build / distribuzione
+dist/
+build/
+*.egg-info/
+
+# 🔸 Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+
+# Chiavi e certificati
+*.pem
+*.key
+*.crt
+
+# Backup
+*.bak
+
+# Dump database
+*.sql
+
+# Ambienti
+venv/
+.env
+
+# Python
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+
+# Logs
+*.log
+
+# Secrets
+*.pem
+*.key
+*.env
+secrets.*
+
+# Database locali
+*.sqlite3
+
+# Build
+dist/
+build/

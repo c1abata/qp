@@ -1,0 +1,20 @@
+[Unit]
+Description=Net Audit Suite v3 — triggered on network link up
+After=network-online.target
+Wants=network-online.target
+BindsTo=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/bin/python3 /opt/net_audit/net_audit.py --config /opt/net_audit/config.ini
+Restart=no
+TimeoutStartSec=900
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=net_audit
+NoNewPrivileges=no
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
