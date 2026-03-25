@@ -70,7 +70,7 @@ def check_udp_random_scan(cfg, out_dir, alerter):
     random.shuffle(ports)
     port_str = ",".join(map(str, ports))
 
-    log.info(f"UDP scan su {target}: {port_str}")
+    log.info(f"UDP scan to {target}: {port_str}")
     out = _run(
         ["nmap", "-sU", "-p", port_str,
          "--max-retries=1", "--host-timeout=60s",
@@ -90,7 +90,7 @@ def check_udp_random_scan(cfg, out_dir, alerter):
 
     if open_ports:
         named = [f"{p}({COMMON_UDP.get(int(p), '?')})" for p in open_ports]
-        msg = f"UDP aperte verso {target}: {named}"
+        msg = f"UDP open to {target}: {named}"
         findings.append(msg)
         alerter.finding(AREA, msg, level="warning")
 
@@ -98,7 +98,7 @@ def check_udp_random_scan(cfg, out_dir, alerter):
 
 
 def check_quic(cfg, out_dir, alerter):
-    """Verifica se QUIC (UDP/443) è raggiungibile."""
+    """Check QUIC (UDP/443)."""
     findings = []
     target = cfg["General"]["target_external"]
     # curl con HTTP/3 per testare QUIC
@@ -111,18 +111,18 @@ def check_quic(cfg, out_dir, alerter):
         f.write(out)
 
     if "3" in out:
-        msg = f"QUIC (HTTP/3) disponibile verso {target}"
+        msg = f"QUIC (HTTP/3) is ok to {target}"
         findings.append(msg)
         alerter.finding(AREA, msg, level="info")
     else:
-        msg = f"QUIC non disponibile verso {target}"
+        msg = f"QUIC not available verso {target}"
         findings.append(msg)
 
     return findings
 
 
 def check_ntp(cfg, out_dir, alerter):
-    """Verifica NTP (UDP/123) - possibile amplification vector."""
+    """NTP (UDP/123) - amplification vector."""
     findings = []
     target = cfg["General"]["target_external"]
     out = _run(
@@ -133,7 +133,7 @@ def check_ntp(cfg, out_dir, alerter):
         f.write(out)
 
     if "stratum" in out.lower() or "offset" in out.lower():
-        msg = f"NTP risponde su {target} (UDP/123)"
+        msg = f"NTP reply from {target} (UDP/123)"
         findings.append(msg)
         alerter.finding(AREA, msg, level="info")
 
@@ -154,7 +154,7 @@ def run(cfg, out_dir, alerter):
             if result:
                 all_findings.extend(result)
         except Exception as e:
-            msg = f"`{check.__name__}` errore: {e}"
+            msg = f"`{check.__name__}` error: {e}"
             log.error(msg)
             alerter.finding(AREA, msg, level="error")
     return all_findings
