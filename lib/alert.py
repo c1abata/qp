@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-lib/alert.py - Sistema di alerting modulare (Telegram + Bluetooth fallback)
+lib/alert.py - Alerting modulare (Telegram + Bluetooth fallback)
 
 Design:
-- Tutti i task usano Alerter
-- Telegram è canale principale
-- Bluetooth è fallback immediato se Telegram fallisce
-- Retry queue persistente
+- Alerter use from task
+- Telegram frist
+- Bluetooth fallback
+- Queue persist
 """
 
 import logging
@@ -60,10 +60,10 @@ class Alerter:
 
     def send(self, message: str, level: str = "info"):
         """
-        Invio multi-canale:
+        Notification order:
         1. Telegram
-        2. Se fallisce → enqueue + Bluetooth
-        3. Se Telegram non configurato → Bluetooth diretto
+        2. Fail → enqueue + Bluetooth
+        3. TG off -> Bluetooth diretto
         """
 
         # Anti-duplicate
@@ -79,7 +79,7 @@ class Alerter:
                 return
 
             # fallback
-            log.warning("Telegram fallito → fallback Bluetooth")
+            log.warning("Telegram failed → fallback Bluetooth")
             self._enqueue(message)
 
             if self.bt:
@@ -134,12 +134,12 @@ class Alerter:
             ok = self.bt.send(message)
 
             if ok:
-                log.info("Alert inviato via Bluetooth")
+                log.info("Send to Bluetooth")
             else:
-                log.warning("Bluetooth send fallito")
+                log.warning("Bluetooth failed send")
 
         except Exception as e:
-            log.error(f"Errore Bluetooth: {e}")
+            log.error(f"Bluetooth Error: {e}")
 
     # ------------------------------------------------------------------
     # RETRY QUEUE
@@ -163,7 +163,7 @@ class Alerter:
                 json.dump(queue, f)
 
         except Exception as e:
-            log.error(f"Enqueue fallito: {e}")
+            log.error(f"Enqueue failed: {e}")
 
     def _flush_pending(self):
         if not os.path.exists(RETRY_FILE):
@@ -197,7 +197,7 @@ def alertable(area: str, alerter: Alerter):
             try:
                 return func(*args, **kwargs)
             except Exception as exc:
-                alerter.finding(area, f"`{func.__name__}` fallito: {exc}", level="error")
+                alerter.finding(area, f"`{func.__name__}` failed: {exc}", level="error")
                 log.error(f"[{area}] {func.__name__}: {exc}")
                 return None
         wrapper.__name__ = func.__name__

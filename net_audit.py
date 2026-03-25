@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-net_audit.py - Network Analysis Suite v3
+net_audit.py - script rampa di lancio per i vari test
 Principi: semplicità, chiarezza, zero magia nascosta. (antirez-style)
 """
 
@@ -22,7 +22,7 @@ def load_config(path):
     cfg = configparser.ConfigParser()
     read_ok = cfg.read(path)
     if not read_ok:
-        print(f"[WARN] config.ini non trovato in '{path}', uso valori di default.", file=sys.stderr)
+        print(f"[WARN] config.ini not found in '{path}', use default.", file=sys.stderr)
     # Garantisce che la sezione [General] esista sempre
     if "General" not in cfg:
         cfg["General"] = {}
@@ -44,15 +44,15 @@ def setup_logging(base_dir):
     logging.getLogger().addHandler(logging.StreamHandler(sys.stderr))
 
 def main():
-    parser = argparse.ArgumentParser(description="Net Audit Suite v3")
+    parser = argparse.ArgumentParser(description="QuickPeek")
     _script_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument("--config", default=os.path.join(_script_dir, "config.ini"))
     parser.add_argument("--iface",  help="Override interface")
-    parser.add_argument("--target", help="Override target esterno")
+    parser.add_argument("--target", help="Override target external")
     parser.add_argument(
         "--tasks",
         default="NET,DOMAIN,DNS,UDP,PRESEC,HYGIENE,HEALTH",
-        help="Task da eseguire (comma-separated). Es: --tasks NET,HYGIENE"
+        help="Flagged Task to run (comma-separated). Es: --tasks NET,HYGIENE"
     )
     args = parser.parse_args()
 
@@ -81,14 +81,14 @@ def main():
     base_dir = f"/var/log/net_audit/{date_str}"
     setup_logging(base_dir)
 
-    logging.info("=== Net Audit v3 avviato ===")
+    logging.info("=== QuickPeek v. 0 - started ===")
     logging.info(f"Interface : {cfg['General']['interface']}")
     logging.info(f"Subnet    : {cfg['General']['local_subnet']}")
     logging.info(f"Gateway   : {cfg['General'].get('gateway','?')}")
     logging.info(f"Target ext: {cfg['General']['target_external']}")
 
     alerter.send(
-        f"🚀 *Net Audit v3 avviato*\n"
+        f"🚀 *QuickPeek v. 0 - started*\n"
         f"Iface: `{cfg['General']['interface']}`\n"
         f"Subnet: `{cfg['General']['local_subnet']}`\n"
         f"Gateway: `{cfg['General'].get('gateway','?')}`\n"
@@ -113,22 +113,22 @@ def main():
     for name, func in TASKS:
         task_dir = f"{base_dir}/{name}"
         os.makedirs(task_dir, exist_ok=True)
-        logging.info(f"--- Inizio {name} ---")
+        logging.info(f"--- Start Peek {name} ---")
         try:
             findings = func(cfg, task_dir, alerter)
             results[name] = findings or []
-            logging.info(f"{name} completato: {len(results[name])} finding(s)")
+            logging.info(f"{name} complete: {len(results[name])} finding(s)")
         except Exception as exc:
-            msg = f"❌ *{name}* errore critico: `{exc}`"
+            msg = f"❌ *{name}* critical error: `{exc}`"
             logging.error(msg)
             alerter.send(msg, level="error")
             results[name] = []
 
     total = sum(len(v) for v in results.values())
     summary_lines = [
-        f"📋 *Report finale Net Audit v3*",
+        f"📋 *Quickpeek Summary*",
         f"Subnet: `{cfg['General']['local_subnet']}`",
-        f"Totale findings: *{total}*", "",
+        f"Total findings: *{total}*", "",
     ]
     for name, findings in results.items():
         icon = "🔴" if findings else "✅"
@@ -136,10 +136,10 @@ def main():
         for f in findings[:5]:
             summary_lines.append(f"  • {f[:120]}")
         if len(findings) > 5:
-            summary_lines.append(f"  … e altri {len(findings)-5}, vedi log")
+            summary_lines.append(f"      … e more {len(findings)-5}, see logs.")
 
     alerter.send("\n".join(summary_lines), level="info")
-    logging.info(f"=== Audit completato. {total} finding(s) totali ===")
+    logging.info(f"=== Terminated peeking. {total} total finding(s) ===")
 
 if __name__ == "__main__":
     main()

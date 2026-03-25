@@ -2,8 +2,8 @@
 """
 lib/bluetooth_alert.py
 
-Invio alert via Bluetooth (OBEX file push).
-Fallback out-of-band quando Telegram/internet non disponibili.
+Send alert Bluetooth (OBEX file push).
+Fallback out-of-band.
 """
 
 import subprocess
@@ -19,8 +19,7 @@ class BluetoothAlerter:
 
     def send(self, message: str) -> bool:
         """
-        Invia un messaggio via Bluetooth creando un file temporaneo
-        e inviandolo tramite OBEX.
+        Send BT Msg with temp e OBEX.
         """
         if not self.mac:
             return False
@@ -54,10 +53,10 @@ class BluetoothAlerter:
                 timeout=10
             )
 
-            log.info(f"Bluetooth alert inviato a {self.mac}")
+            log.info(f"BT send TO {self.mac}")
             return True
 
         except Exception as e:
-            log.warning(f"Bluetooth send fallito: {e}")
+            log.warning(f"BT send failed: {e}")
             return False
         

@@ -1,11 +1,11 @@
 """
-lib/nic.py - Auto-rilevamento parametri di rete dalla NIC attiva.
+lib/nic.py - Recon NIC status.
 
 Logica:
-  1. Trova l'interfaccia con IP (prima non-loopback online)
-  2. Deriva subnet dalla maschera
-  3. Legge gateway dalla routing table
-  4. Cerca parametri custom nel lease DHCP (opzione 252 o hostname trick)
+  1. Fidn IP (prima non-loopback online)
+  2. Extract Subnet
+  3. Extract Gateway
+  4. find custom code DHCP (options 252 o hostname trick)
 """
 
 import os
@@ -62,7 +62,7 @@ def ip_prefix_to_subnet(ip, prefix):
 # ---------------------------------------------------------------------------
 
 def get_default_gateway():
-    """Legge il gateway di default dalla routing table."""
+    """Read Gateway from route table."""
     try:
         out = subprocess.check_output(["ip", "route", "show", "default"],
                                       text=True, stderr=subprocess.DEVNULL)
