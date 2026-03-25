@@ -1,6 +1,6 @@
 """
 tasks/udp.py - UDP Area
-Checks: UDP scan randomizzato, QUIC, servizi UDP comuni.
+Checks: UDP random scan, QUIC, common UDP.
 """
 
 import random
@@ -29,7 +29,7 @@ def _run(cmd, timeout=120):
 # ---------------------------------------------------------------------------
 
 def _pick_ports(ranges_str, n_per_range=5):
-    """Seleziona N porte random da ogni range specificato in config."""
+    """Selected N random port from range in config.ini ."""
     ports = []
     for r in ranges_str.split(","):
         r = r.strip()
@@ -60,7 +60,7 @@ COMMON_UDP = {
 # ---------------------------------------------------------------------------
 
 def check_udp_random_scan(cfg, out_dir, alerter):
-    """Scansione UDP randomizzata verso target esterno."""
+    """Random UDP to external target."""
     findings = []
     target  = cfg["General"]["target_external"]
     ranges  = cfg.get("Scan", "udp_port_ranges", fallback="1-1024,40000-60000")

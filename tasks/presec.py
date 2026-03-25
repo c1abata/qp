@@ -33,7 +33,7 @@ def _run(cmd, out_file=None, timeout=60):
 # ---------------------------------------------------------------------------
 
 def check_traceroute(cfg, out_dir, alerter):
-    """Traceroute verso target esterno. Rileva hop anomali o asimmetrie."""
+    """Traceroute external. Recon hop anomaly o asimmetric."""
     findings = []
     target = cfg["General"]["target_external"]
     out = _run(
@@ -45,11 +45,11 @@ def check_traceroute(cfg, out_dir, alerter):
     hop_count = len([h for h in hops if h[1] != "*"])
 
     if hop_count == 0:
-        msg = f"Traceroute fallito verso {target} (firewall blocca ICMP?)"
+        msg = f"Traceroute fallito verso {target} (firewall block ICMP?)"
         findings.append(msg)
         alerter.finding(AREA, msg, level="warning")
     elif hop_count > 15:
-        msg = f"Percorso molto lungo: {hop_count} hop verso {target}"
+        msg = f"Path too long: {hop_count} hop to {target}"
         findings.append(msg)
         alerter.finding(AREA, msg, level="info")
     else:
@@ -60,9 +60,7 @@ def check_traceroute(cfg, out_dir, alerter):
 
 def check_udp_outbound(cfg, out_dir, alerter):
     """
-    Verifica quali porte UDP uscenti sono filtrate.
-    Invia pacchetti UDP a target esterno, osserva ICMP unreachable.
-    Usa nmap per semplicità e affidabilità.
+    Check UDP.
     """
     findings = []
     target = cfg["General"]["target_external"]
@@ -78,8 +76,8 @@ def check_udp_outbound(cfg, out_dir, alerter):
     open_ports     = re.findall(r'(\d+)/udp\s+open\b', out)
     filtered_ports = re.findall(r'(\d+)/udp\s+open\|filtered', out)
 
-    msg = (f"UDP outbound: aperte={open_ports or 'nessuna'}, "
-           f"filtrate={filtered_ports or 'nessuna'}")
+    msg = (f"UDP outbound: open={open_ports or 'nothing'}, "
+           f"filtered={filtered_ports or 'nothing'}")
     findings.append(msg)
     if open_ports:
         alerter.finding(AREA, msg, level="info")
@@ -90,7 +88,7 @@ def check_udp_outbound(cfg, out_dir, alerter):
 
 
 def check_tcp_services(cfg, out_dir, alerter):
-    """TCP scan della subnet locale - individua servizi esposti."""
+    """TCP scan local subnet - Find Service Exposed"""
     findings = []
     subnet = cfg["General"]["local_subnet"]
     ports  = cfg.get("Scan", "tcp_service_ports",
@@ -112,14 +110,14 @@ def check_tcp_services(cfg, out_dir, alerter):
     for port, name in DANGEROUS.items():
         if f"{port}/open" in gnmap:
             hosts = re.findall(rf'Host:\s+(\S+).*?{port}/open', gnmap)
-            msg = f"Porta rischiosa {port}/{name} aperta su: {hosts}"
+            msg = f"Porta risk {port}/{name} listening on: {hosts}"
             findings.append(msg)
             alerter.finding(AREA, msg, level="critical")
 
     # Conteggio totale host con porte aperte
     all_hosts = re.findall(r'Host:\s+(\d+\.\d+\.\d+\.\d+)', gnmap)
     if all_hosts:
-        msg = f"Host con porte TCP aperte: {len(set(all_hosts))}"
+        msg = f"TCP Open: {len(set(all_hosts))}"
         findings.append(msg)
         alerter.finding(AREA, msg, level="info")
 
@@ -127,7 +125,7 @@ def check_tcp_services(cfg, out_dir, alerter):
 
 
 def check_nat_hairpin(cfg, out_dir, alerter):
-    """NAT hairpinning via STUN."""
+    """NAT hairpinning with STUN."""
     findings = []
     out = _run(
         ["stunclient", "--mode", "full", "stun.l.google.com", "19302"],
@@ -137,10 +135,10 @@ def check_nat_hairpin(cfg, out_dir, alerter):
     if not out:
         # Fallback: usa nc per testare connettività STUN base
         out = _run(["nc", "-zu", "-w3", "stun.l.google.com", "19302"])
-        open(f"{out_dir}/nat_hairpin.txt", "w").write(out or "stunclient non disponibile")
+        open(f"{out_dir}/nat_hairpin.txt", "w").write(out or "stunclient not available")
 
     if "hairpin" in out.lower() or "reflection" in out.lower():
-        msg = "NAT hairpinning (reflection) rilevato"
+        msg = "NAT hairpinning (reflection) found"
         findings.append(msg)
         alerter.finding(AREA, msg, level="info")
     elif "nat type" in out.lower():
@@ -156,11 +154,11 @@ def check_nat_hairpin(cfg, out_dir, alerter):
 def check_egress_tcp(cfg, out_dir, alerter):
     """
     Verifica quali porte TCP uscenti sono permesse.
-    Tenta connessione verso target su porte significative.
+    Check TCP Outbound.
     """
     findings = []
     target = cfg["General"]["target_external"]
-    test_ports = [80, 443, 8080, 8443, 25, 465, 587, 22, 53]
+    test_ports = [80, 443, 8080, 8443, 25, 465, 587, 22, 53, 21, 5061, ]
 
     results = {"open": [], "filtered": []}
     with open(f"{out_dir}/egress_tcp.txt", "w") as f:
@@ -173,13 +171,13 @@ def check_egress_tcp(cfg, out_dir, alerter):
             results[status].append(port)
             f.write(f"TCP {port}: {status}\n")
 
-    msg = f"Egress TCP — aperte: {results['open']}, filtrate: {results['filtered']}"
+    msg = f"Egress TCP — open: {results['open']}, filtered: {results['filtered']}"
     findings.append(msg)
 
     # Porte pericolose uscenti aperte
     risky_out = [p for p in results["open"] if p in (25, 587)]
     if risky_out:
-        alerter.finding(AREA, f"Porta SMTP uscente aperta: {risky_out} (rischio relay/spam)", level="warning")
+        alerter.finding(AREA, f"Porta SMTP: {risky_out} (relay/spam risk)", level="warning")
     else:
         alerter.finding(AREA, msg, level="info")
 

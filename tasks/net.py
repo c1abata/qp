@@ -2,8 +2,6 @@
 tasks/net.py - NET Area
 Checks: IP config, VLAN, IPv6, ARP scan, MAC spoofing, ARP sniffing + OUI lookup.
 
-Ogni check è una funzione autonoma. Aggiungere un check = aggiungere una funzione
-e inserirla nella lista CHECKS in fondo. Zero magia, zero dipendenze nascoste.
 """
 
 import os

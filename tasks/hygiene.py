@@ -3,7 +3,7 @@ tasks/hygiene.py - HYGIENE Area
 Network hygiene checks: default credentials, open shares, weak protocols,
 rogue DHCP, exposed management interfaces, cleartext services, certificate health.
 
-Ogni check è autonomo e non ha side-effect sugli altri.
+
 """
 
 import re
