@@ -9,8 +9,8 @@ Nel tempo i moduli si sono aggiunti e vengono
 
 ## ✨ Caratteristiche
 
-* 📡 Monitoraggio rete ( deamon opzionale)
-* 🔔 Sistema di alert BLE/TG (modulare)
+* 📡 Monitoraggio rete ( Servizio opzionale)
+* 🔔 Sistema di alert BL/TG (modulare)
 * 📂 Architettura a moduli (`lib/`, `tasks/`)
 * ⚙️ Configurazione tramite file (`config.ini`)
 * 🧩 Estendibile con nuove funzionalità
@@ -84,23 +84,6 @@ Modifica il file:
 ```
 config.ini
 ```
-
-⚠️ **NON inserire credenziali sensibili nel repository pubblico**
-
-Per configurazioni sensibili:
-
-* usa variabili ambiente (`.env`)
-* oppure file locali esclusi da `.gitignore`
-
----
-
-## 🔐 Sicurezza
-
-* `.env` escluso dal versionamento
-* nessuna credenziale hardcoded
-* supporto a configurazioni locali sicure
-
----
 
 ## 🔄 Workflow sviluppo
 
