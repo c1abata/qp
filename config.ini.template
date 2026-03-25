@@ -8,6 +8,8 @@ interface =
 local_subnet =
 # Gateway di default (auto-rilevato)
 gateway =
+# Modalita operativa: passive (default) o active
+mode = passive
 # Target esterno per test di connettività (DHCP opt-252 > questo valore)
 target_external = 1.1.1.1,8.8.8.8
 timeout = 10
@@ -17,6 +19,9 @@ timeout = 10
 bot_token =
 # Chat ID del canale/gruppo dove ricevere le notifiche
 chat_id =
+# Comandi supportati dal bot:
+# /mode passive
+# /mode active
 
 [Scan]
 # Porte TCP da scansionare nella subnet locale (task PRESEC)

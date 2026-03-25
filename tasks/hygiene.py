@@ -12,6 +12,7 @@ import subprocess
 import logging
 import json
 import os
+import shutil
 
 log = logging.getLogger(__name__)
 AREA = "HYGIENE"
@@ -31,6 +32,35 @@ def _run(cmd, out_file=None, timeout=30):
     except Exception as e:
         log.error(f"_run {cmd[0]}: {e}")
         return ""
+
+
+def _command_available(name):
+    return shutil.which(name) is not None
+
+
+def _extract_host_ip(header):
+    match = re.search(r'\((\d+\.\d+\.\d+\.\d+)\)$', header.strip())
+    if match:
+        return match.group(1)
+
+    match = re.search(r'(\d+\.\d+\.\d+\.\d+)', header)
+    return match.group(1) if match else header.strip()
+
+
+def _iter_nmap_host_blocks(text):
+    for chunk in text.split("Nmap scan report for ")[1:]:
+        header, _, rest = chunk.partition("\n")
+        host = _extract_host_ip(header)
+        yield host, rest
+
+
+def _hosts_with_open_port(text, port, proto="tcp"):
+    hosts = []
+    needle = f"{port}/{proto}"
+    for host, block in _iter_nmap_host_blocks(text):
+        if needle in block and " open " in block:
+            hosts.append(host)
+    return sorted(set(hosts))
 
 
 def _tcp_connect(host, port, timeout=3):
@@ -106,7 +136,7 @@ def check_open_shares(cfg, out_dir, alerter):
 
     # SMB null session
     out_smb = _run(
-        ["nmap", "-p", "445", "--open", "-T4",
+        ["nmap", "-n", "-T2", "-p", "445", "--open", "--max-retries=1",
          "--script", "smb-enum-shares,smb-security-mode",
          "--script-args", "smbusername=guest,smbpassword=",
          "-oN", f"{out_dir}/smb_shares.txt", subnet],
@@ -114,22 +144,21 @@ def check_open_shares(cfg, out_dir, alerter):
     )
 
     # Cerca share trovate
-    shares = re.findall(r'(\\\\[^\n]+?)\s+\n', out_smb)
     anon_shares = re.findall(r'(SHARE|IPC\$|print\$|[A-Za-z0-9_]+)\s+\n.*?Anonymous access:\s+READ', out_smb)
+    hosts_smb = _hosts_with_open_port(out_smb, "445")
 
     if anon_shares:
-        msg = f"Share SMB anonime accessibili: {anon_shares}"
+        msg = f"Share SMB anonime accessibili: {sorted(set(anon_shares))}"
         findings.append(msg)
         alerter.finding(AREA, msg, level="critical")
-    elif "445/open" in out_smb:
-        hosts_smb = re.findall(r'(\d+\.\d+\.\d+\.\d+).*?445/open', out_smb)
+    elif hosts_smb:
         msg = f"Host SMB trovati (auth richiesta): {hosts_smb}"
         findings.append(msg)
         alerter.finding(AREA, msg, level="info")
 
     # NFS exports
     out_nfs = _run(
-        ["nmap", "-p", "111,2049", "--open", "-T4",
+        ["nmap", "-n", "-T2", "-p", "111,2049", "--open", "--max-retries=1",
          "--script", "nfs-showmount,nfs-ls",
          "-oN", f"{out_dir}/nfs_shares.txt", subnet],
         timeout=120
@@ -153,8 +182,8 @@ def check_cleartext_services(cfg, out_dir, alerter):
     CLEARTEXT_PORTS = "21,23,25,80,110,143,161,512,513,514,8080"
 
     out = _run(
-        ["nmap", "-sV", "-p", CLEARTEXT_PORTS, "--open", "-T4",
-         "--version-intensity", "3",
+        ["nmap", "-sV", "-n", "-T2", "-p", CLEARTEXT_PORTS, "--open",
+         "--max-retries=1", "--version-intensity", "2",
          "-oN", f"{out_dir}/cleartext_services.txt", subnet],
         timeout=240
     )
@@ -167,17 +196,14 @@ def check_cleartext_services(cfg, out_dir, alerter):
         "514": "rsh",
     }
     for port, svc in RISKY.items():
-        if f"{port}/open" in out or f"{port}/tcp open" in out:
-            hosts = re.findall(
-                rf'(\d+\.\d+\.\d+\.\d+)(?:.*\n)*?.*?{port}/tcp\s+open',
-                out
-            )
-            msg = f"Servizio cleartext {svc} (:{port}) attivo su subnet"
+        hosts = _hosts_with_open_port(out, port)
+        if hosts:
+            msg = f"Servizio cleartext {svc} (:{port}) attivo su: {hosts}"
             findings.append(msg)
             alerter.finding(AREA, msg, level="critical")
 
     # HTTP (80/8080) senza redirect a HTTPS
-    http_hosts = re.findall(r'(\d+\.\d+\.\d+\.\d+)', out)
+    http_hosts = _hosts_with_open_port(out, "80") + _hosts_with_open_port(out, "8080")
     http_open = []
     for h in set(http_hosts):
         out_http = _run(
@@ -245,7 +271,8 @@ def check_exposed_management(cfg, out_dir, alerter):
     )
 
     out = _run(
-        ["nmap", "-sV", "-p", MGMT_PORTS, "--open", "-T4",
+        ["nmap", "-sV", "-n", "-T2", "-p", MGMT_PORTS, "--open",
+         "--max-retries=1",
          "-oN", f"{out_dir}/mgmt_interfaces.txt", subnet],
         timeout=240
     )
@@ -263,12 +290,9 @@ def check_exposed_management(cfg, out_dir, alerter):
 
     for svc, ports in MGMT_SIGNATURES.items():
         for p in ports:
-            if f"{p}/open" in out or f"{p}/tcp open" in out:
-                hosts = re.findall(
-                    rf'(\d+\.\d+\.\d+\.\d+)(?:[^\n]*\n)*?[^\n]*{p}/tcp\s+open',
-                    out
-                )
-                msg = f"Interfaccia di gestione {svc} (:{p}) esposta in LAN"
+            hosts = _hosts_with_open_port(out, p)
+            if hosts:
+                msg = f"Interfaccia di gestione {svc} (:{p}) esposta su: {hosts}"
                 findings.append(msg)
                 alerter.finding(AREA, msg, level="warning")
 
@@ -285,9 +309,16 @@ def check_tls_certificates(cfg, out_dir, alerter):
     findings = []
     subnet = cfg["General"]["local_subnet"]
 
+    if not _command_available("openssl"):
+        msg = "openssl non disponibile: skip verifica certificati TLS"
+        log.warning(msg)
+        with open(f"{out_dir}/tls_report.txt", "w") as f:
+            f.write(msg + "\n")
+        return findings
+
     # Prima trova host con 443 aperto
     out_scan = _run(
-        ["nmap", "-p", "443,8443", "--open", "-T4", subnet,
+        ["nmap", "-n", "-T2", "-p", "443,8443", "--open", "--max-retries=1", subnet,
          "-oG", f"{out_dir}/tls_hosts.gnmap"],
         timeout=120
     )
@@ -321,8 +352,9 @@ def check_tls_certificates(cfg, out_dir, alerter):
             subject = re.search(r'subject=(.+)', out)
             if issuer and subject and issuer.group(1).strip() == subject.group(1).strip():
                 msg = f"Certificato self-signed su {host}:{port}"
-                findings.append(msg)
-                alerter.finding(AREA, msg, level="warning")
+                if msg not in findings:
+                    findings.append(msg)
+                    alerter.finding(AREA, msg, level="warning")
 
             # TLS 1.0 / 1.1 accettato
             for old_tls in ["-tls1", "-tls1_1"]:
@@ -334,8 +366,9 @@ def check_tls_certificates(cfg, out_dir, alerter):
                 if "Verify return code" in tls_out:
                     ver = "TLS 1.0" if old_tls == "-tls1" else "TLS 1.1"
                     msg = f"Protocollo obsoleto {ver} accettato da {host}:{port}"
-                    findings.append(msg)
-                    alerter.finding(AREA, msg, level="warning")
+                    if msg not in findings:
+                        findings.append(msg)
+                        alerter.finding(AREA, msg, level="warning")
 
     with open(f"{out_dir}/tls_report.txt", "w") as f:
         f.write("\n".join(report) if report else "Nessun host HTTPS trovato.\n")
@@ -351,9 +384,16 @@ def check_snmp_community(cfg, out_dir, alerter):
     findings = []
     subnet = cfg["General"]["local_subnet"]
 
+    if not _command_available("snmpget"):
+        msg = "snmpget non disponibile: skip test community SNMP"
+        log.warning(msg)
+        with open(f"{out_dir}/snmp_report.txt", "w") as f:
+            f.write(msg + "\n")
+        return findings
+
     # Trova host con UDP 161 aperto
     out_scan = _run(
-        ["nmap", "-sU", "-p", "161", "--open", "-T4", subnet,
+        ["nmap", "-sU", "-n", "-T2", "-p", "161", "--open", "--max-retries=1", subnet,
          "-oG", f"{out_dir}/snmp_hosts.gnmap"],
         timeout=120
     )
@@ -411,7 +451,7 @@ def check_upnp_exposure(cfg, out_dir, alerter):
 
     # Anche su porta 1900 UDP direttamente
     out2 = _run(
-        ["nmap", "-sU", "-p", "1900", "--open", "-T4",
+        ["nmap", "-sU", "-n", "-T2", "-p", "1900", "--open", "--max-retries=1",
          "--script", "upnp-info",
          "-oN", f"{out_dir}/upnp_udp.txt",
          cfg["General"]["local_subnet"]],
@@ -435,7 +475,7 @@ def check_password_policy(cfg, out_dir, alerter):
     subnet = cfg["General"]["local_subnet"]
 
     out = _run(
-        ["nmap", "-p", "445", "--open", "-T4",
+        ["nmap", "-n", "-T2", "-p", "445", "--open", "--max-retries=1",
          "--script", "smb-security-mode,smb2-security-mode,smb-enum-users",
          "-oN", f"{out_dir}/smb_auth.txt", subnet],
         timeout=120
@@ -525,6 +565,10 @@ def check_wireless_security(cfg, out_dir, alerter):
     """
     findings = []
 
+    if not _command_available("iw"):
+        log.info("iw non disponibile, skip check_wireless_security")
+        return findings
+
     # Cerca interfacce wireless
     out_iw = _run(["iw", "dev"])
     wlan_ifaces = re.findall(r'Interface\s+(\S+)', out_iw)
@@ -541,10 +585,6 @@ def check_wireless_security(cfg, out_dir, alerter):
     )
 
     # Reti aperte (nessuna encryption)
-    open_nets = re.findall(r'SSID:\s+(\S+)(?:.*?\n)*?.*?capability:\s+[^\n]*?(?!Privacy)', out_scan)
-
-    # Approccio alternativo: cerca entry senza RSN/WPA
-    ssids = re.findall(r'SSID:\s+(.+)', out_scan)
     wpa_blocks = out_scan.split("BSS ")
     open_ssids = []
     for block in wpa_blocks:
@@ -1067,10 +1107,14 @@ def check_network_doh_dot_policy(cfg, out_dir, alerter):
 # Entry point
 # ---------------------------------------------------------------------------
 
-CHECKS = [
-    check_default_credentials,
+PASSIVE_CHECKS = [
     check_doh_enforcement,
     check_network_doh_dot_policy,
+    check_arp_table_anomalies,
+]
+
+ACTIVE_ONLY_CHECKS = [
+    check_default_credentials,
     check_open_shares,
     check_cleartext_services,
     check_rogue_dhcp,
@@ -1079,18 +1123,25 @@ CHECKS = [
     check_snmp_community,
     check_upnp_exposure,
     check_password_policy,
-    check_arp_table_anomalies,
     check_wireless_security,
 ]
 
 
-def run(cfg, out_dir, alerter):
+def run(cfg, out_dir, alerter, mode="active"):
     all_findings = []
-    for check in CHECKS:
+    seen = set()
+    checks = list(PASSIVE_CHECKS)
+    if mode == "active":
+        checks.extend(ACTIVE_ONLY_CHECKS)
+
+    for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:
-                all_findings.extend(result)
+                for finding in result:
+                    if finding not in seen:
+                        seen.add(finding)
+                        all_findings.append(finding)
         except Exception as e:
             msg = f"`{check.__name__}` errore: {e}"
             log.error(msg)

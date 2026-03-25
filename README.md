@@ -72,8 +72,27 @@ pip install -r requirements.txt
 ## ▶️ Utilizzo
 
 ```bash
-python main.py
+python net_audit.py
 ```
+
+Modalita operative:
+
+```bash
+python net_audit.py --mode passive
+python net_audit.py --mode active
+```
+
+`passive` e la modalita di default e limita i controlli a verifiche locali o outbound.
+`active` abilita anche le scansioni verso subnet/host remoti, usando timing piu conservativi (`-T2`, retry ridotti, no DNS lookup) per minimizzare rumore e impatto.
+
+Se Telegram e configurato, il bot accetta:
+
+```text
+/mode passive
+/mode active
+```
+
+L'ultimo comando ricevuto dal `chat_id` configurato diventa la modalita usata ai run successivi, salvo override esplicito da CLI.
 
 ---
 

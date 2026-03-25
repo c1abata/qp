@@ -68,7 +68,7 @@ def check_udp_outbound(cfg, out_dir, alerter):
     port_str = ",".join(map(str, test_ports))
 
     out = _run(
-        ["nmap", "-sU", "-p", port_str, "--max-retries=1",
+        ["nmap", "-sU", "-n", "-T2", "-p", port_str, "--max-retries=1",
          "--host-timeout=30s", target,
          "-oN", f"{out_dir}/udp_outbound.txt"],
         timeout=90
@@ -95,7 +95,7 @@ def check_tcp_services(cfg, out_dir, alerter):
                      fallback="21,22,23,25,80,443,8080,8443,8181,3389,4444,5900")
 
     out = _run(
-        ["nmap", "-sS", "-p", ports, "--open", "-T4",
+        ["nmap", "-sS", "-n", "-T2", "-p", ports, "--open", "--max-retries=1",
          "-oG", f"{out_dir}/tcp_services.gnmap", subnet],
         timeout=300
     )
@@ -188,17 +188,24 @@ def check_egress_tcp(cfg, out_dir, alerter):
 # Entry point
 # ---------------------------------------------------------------------------
 
-CHECKS = [
+PASSIVE_CHECKS = [
     check_traceroute,
     check_udp_outbound,
-    check_tcp_services,
     check_nat_hairpin,
     check_egress_tcp,
 ]
 
-def run(cfg, out_dir, alerter):
+ACTIVE_ONLY_CHECKS = [
+    check_tcp_services,
+]
+
+def run(cfg, out_dir, alerter, mode="active"):
     all_findings = []
-    for check in CHECKS:
+    checks = list(PASSIVE_CHECKS)
+    if mode == "active":
+        checks.extend(ACTIVE_ONLY_CHECKS)
+
+    for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:

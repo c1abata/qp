@@ -43,12 +43,32 @@ def setup_logging(base_dir):
     )
     logging.getLogger().addHandler(logging.StreamHandler(sys.stderr))
 
+
+def choose_base_dir():
+    date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    preferred_root = "/var/log/net_audit"
+    fallback_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+
+    for root in (preferred_root, fallback_root):
+        try:
+            os.makedirs(root, exist_ok=True)
+            test_file = os.path.join(root, ".write_test")
+            with open(test_file, "w") as f:
+                f.write("")
+            os.remove(test_file)
+            return os.path.join(root, date_str)
+        except OSError:
+            continue
+
+    raise OSError("No writable log directory available")
+
 def main():
     parser = argparse.ArgumentParser(description="QuickPeek")
     _script_dir = os.path.dirname(os.path.abspath(__file__))
     parser.add_argument("--config", default=os.path.join(_script_dir, "config.ini"))
     parser.add_argument("--iface",  help="Override interface")
     parser.add_argument("--target", help="Override target external")
+    parser.add_argument("--mode", choices=["passive", "active"], help="Override operational mode")
     parser.add_argument(
         "--tasks",
         default="NET,DOMAIN,DNS,UDP,PRESEC,HYGIENE,HEALTH",
@@ -76,9 +96,13 @@ def main():
     cfg["General"]["target_external"] = target_external
 
     alerter = Alerter(cfg)
+    default_mode = cfg.get("General", "mode", fallback="passive").strip().lower() or "passive"
+    mode = (args.mode or alerter.fetch_mode_override(default_mode)).lower()
+    if mode not in ("passive", "active"):
+        mode = "passive"
+    cfg["General"]["mode"] = mode
 
-    date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    base_dir = f"/var/log/net_audit/{date_str}"
+    base_dir = choose_base_dir()
     setup_logging(base_dir)
 
     logging.info("=== QuickPeek v. 0 - started ===")
@@ -86,9 +110,11 @@ def main():
     logging.info(f"Subnet    : {cfg['General']['local_subnet']}")
     logging.info(f"Gateway   : {cfg['General'].get('gateway','?')}")
     logging.info(f"Target ext: {cfg['General']['target_external']}")
+    logging.info(f"Mode      : {cfg['General']['mode']}")
 
     alerter.send(
         f"🚀 *QuickPeek v. 0 - started*\n"
+        f"Mode: `{cfg['General']['mode']}`\n"
         f"Iface: `{cfg['General']['interface']}`\n"
         f"Subnet: `{cfg['General']['local_subnet']}`\n"
         f"Gateway: `{cfg['General'].get('gateway','?')}`\n"
@@ -115,7 +141,7 @@ def main():
         os.makedirs(task_dir, exist_ok=True)
         logging.info(f"--- Start Peek {name} ---")
         try:
-            findings = func(cfg, task_dir, alerter)
+            findings = func(cfg, task_dir, alerter, mode=mode)
             results[name] = findings or []
             logging.info(f"{name} complete: {len(results[name])} finding(s)")
         except Exception as exc:
@@ -127,6 +153,7 @@ def main():
     total = sum(len(v) for v in results.values())
     summary_lines = [
         f"📋 *Quickpeek Summary*",
+        f"Mode: `{cfg['General']['mode']}`",
         f"Subnet: `{cfg['General']['local_subnet']}`",
         f"Total findings: *{total}*", "",
     ]

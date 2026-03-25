@@ -147,17 +147,24 @@ def check_dns_rebinding(cfg, out_dir, alerter):
 # Entry point
 # ---------------------------------------------------------------------------
 
-CHECKS = [
+PASSIVE_CHECKS = [
     check_standard_queries,
-    check_axfr,
     check_dot,
     check_doh,
     check_dns_rebinding,
 ]
 
-def run(cfg, out_dir, alerter):
+ACTIVE_ONLY_CHECKS = [
+    check_axfr,
+]
+
+def run(cfg, out_dir, alerter, mode="active"):
     all_findings = []
-    for check in CHECKS:
+    checks = list(PASSIVE_CHECKS)
+    if mode == "active":
+        checks.extend(ACTIVE_ONLY_CHECKS)
+
+    for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:

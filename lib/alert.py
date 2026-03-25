@@ -13,6 +13,7 @@ import logging
 import os
 import json
 import time
+import re
 import requests
 
 from lib.bluetooth_alert import BluetoothAlerter
@@ -47,6 +48,44 @@ class Alerter:
 
         # Retry queue flush
         self._flush_pending()
+
+    def _state_root(self):
+        preferred = "/var/log/net_audit"
+        fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "state")
+
+        for root in (preferred, fallback):
+            try:
+                os.makedirs(root, exist_ok=True)
+                test_file = os.path.join(root, ".write_test")
+                with open(test_file, "w") as f:
+                    f.write("")
+                os.remove(test_file)
+                return root
+            except OSError:
+                continue
+
+        return fallback
+
+    def _state_file(self):
+        return os.path.join(self._state_root(), "telegram_state.json")
+
+    def _load_state(self):
+        path = self._state_file()
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_state(self, state):
+        path = self._state_file()
+        try:
+            with open(path, "w") as f:
+                json.dump(state, f)
+        except Exception as e:
+            log.warning(f"State save failed: {e}")
 
     # ------------------------------------------------------------------
     # API
@@ -93,6 +132,59 @@ class Alerter:
 
     def ok(self, area: str, message: str):
         log.info(f"OK [{area}] {message}")
+
+    def fetch_mode_override(self, default_mode: str = "passive") -> str:
+        """
+        Resolve operational mode from Telegram commands and persist the last
+        accepted value. Accepted commands:
+        - /mode passive
+        - /mode active
+        - mode passive
+        - mode active
+        """
+        state = self._load_state()
+        current_mode = state.get("mode", default_mode).lower()
+
+        if not self.enabled:
+            return current_mode
+
+        offset = state.get("telegram_update_offset", 0)
+        url = f"https://api.telegram.org/bot{self.token}/getUpdates"
+
+        try:
+            response = requests.get(
+                url,
+                params={"timeout": 1, "offset": offset},
+                timeout=5,
+            )
+            payload = response.json() if response.ok else {}
+        except Exception as e:
+            log.warning(f"Telegram getUpdates failed: {e}")
+            return current_mode
+
+        if not payload.get("ok"):
+            return current_mode
+
+        highest_update_id = offset - 1 if offset else 0
+        for update in payload.get("result", []):
+            update_id = update.get("update_id", 0)
+            highest_update_id = max(highest_update_id, update_id)
+            message = update.get("message") or update.get("edited_message") or {}
+            chat_id = str(message.get("chat", {}).get("id", ""))
+            text = (message.get("text") or "").strip()
+
+            if chat_id != str(self.chat_id) or not text:
+                continue
+
+            match = re.search(r'^(?:/mode|mode)\s+(passive|active)\b', text, re.I)
+            if match:
+                current_mode = match.group(1).lower()
+
+        if highest_update_id >= offset:
+            state["telegram_update_offset"] = highest_update_id + 1
+        state["mode"] = current_mode
+        self._save_state(state)
+        return current_mode
 
     # ------------------------------------------------------------------
     # TELEGRAM

@@ -72,7 +72,7 @@ def check_udp_random_scan(cfg, out_dir, alerter):
 
     log.info(f"UDP scan to {target}: {port_str}")
     out = _run(
-        ["nmap", "-sU", "-p", port_str,
+        ["nmap", "-sU", "-n", "-T2", "-p", port_str,
          "--max-retries=1", "--host-timeout=60s",
          "-oN", f"{out_dir}/udp_scan.txt", target],
         timeout=180
@@ -144,11 +144,17 @@ def check_ntp(cfg, out_dir, alerter):
 # Entry point
 # ---------------------------------------------------------------------------
 
-CHECKS = [check_udp_random_scan, check_quic, check_ntp]
+PASSIVE_CHECKS = [check_quic, check_ntp]
 
-def run(cfg, out_dir, alerter):
+ACTIVE_ONLY_CHECKS = [check_udp_random_scan]
+
+def run(cfg, out_dir, alerter, mode="active"):
     all_findings = []
-    for check in CHECKS:
+    checks = list(PASSIVE_CHECKS)
+    if mode == "active":
+        checks.extend(ACTIVE_ONLY_CHECKS)
+
+    for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:

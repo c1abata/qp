@@ -21,7 +21,7 @@ def has_internet(target="1.1.1.1"):
         return False
 
 
-def run(cfg, out_dir, alerter):
+def run(cfg, out_dir, alerter, mode="active"):
     findings = []
 
     bt_mac = cfg.get("Bluetooth", "device_mac", fallback=None)

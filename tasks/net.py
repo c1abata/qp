@@ -180,19 +180,26 @@ def check_arp_sniff(cfg, out_dir, alerter):
 # Entry point
 # ---------------------------------------------------------------------------
 
-CHECKS = [
+PASSIVE_CHECKS = [
     check_ip_config,
     check_vlan,
     check_ipv6,
-    check_arp_scan,
     check_mac_spoof,
+]
+
+ACTIVE_ONLY_CHECKS = [
+    check_arp_scan,
     check_arp_sniff,
 ]
 
-def run(cfg, out_dir, alerter):
+def run(cfg, out_dir, alerter, mode="active"):
     """Esegui tutti i check NET. Ritorna lista di findings."""
     all_findings = []
-    for check in CHECKS:
+    checks = list(PASSIVE_CHECKS)
+    if mode == "active":
+        checks.extend(ACTIVE_ONLY_CHECKS)
+
+    for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:

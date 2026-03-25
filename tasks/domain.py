@@ -68,7 +68,7 @@ def check_ldap_ports(cfg, out_dir, alerter):
     findings = []
     subnet = cfg["General"]["local_subnet"]
     out = _run(
-        ["nmap", "-p", "389,636,3268,3269", "--open", "-T4",
+        ["nmap", "-n", "-T2", "-p", "389,636,3268,3269", "--open", "--max-retries=1",
          "-oG", f"{out_dir}/ldap_scan.gnmap", subnet],
         timeout=120
     )
@@ -94,7 +94,7 @@ def check_mdns_netbios(cfg, out_dir, alerter):
     subnet = cfg["General"]["local_subnet"]
     # nmap con script smb e mdns
     out = _run(
-        ["nmap", "-p", "5353,137,138,139,445", "--open", "-T4",
+        ["nmap", "-n", "-T2", "-p", "5353,137,138,139,445", "--open", "--max-retries=1",
          "--script", "nbstat,dns-service-discovery",
          "-oN", f"{out_dir}/mdns_netbios.txt", subnet],
         timeout=120
@@ -112,11 +112,17 @@ def check_mdns_netbios(cfg, out_dir, alerter):
 # Entry point
 # ---------------------------------------------------------------------------
 
-CHECKS = [check_ad_srv, check_ldap_ports, check_mdns_netbios]
+PASSIVE_CHECKS = [check_ad_srv]
 
-def run(cfg, out_dir, alerter):
+ACTIVE_ONLY_CHECKS = [check_ldap_ports, check_mdns_netbios]
+
+def run(cfg, out_dir, alerter, mode="active"):
     all_findings = []
-    for check in CHECKS:
+    checks = list(PASSIVE_CHECKS)
+    if mode == "active":
+        checks.extend(ACTIVE_ONLY_CHECKS)
+
+    for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:
