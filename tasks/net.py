@@ -1,211 +1,155 @@
-"""
-tasks/net.py - NET Area
-Checks: IP config, VLAN, IPv6, ARP scan, MAC spoofing, ARP sniffing + OUI lookup.
+"""tasks/net.py - fast network posture checks.
 
+Design goals:
+- low false positives
+- bounded runtime
+- useful output for operators
 """
 
+from __future__ import annotations
+
+import ipaddress
 import os
 import re
+import shutil
+import socket
 import subprocess
-import logging
-import requests
 
-log = logging.getLogger(__name__)
 
 AREA = "NET"
 
 
-# ---------------------------------------------------------------------------
-# Helper
-# ---------------------------------------------------------------------------
-
-def _run(cmd, out_file=None, timeout=30):
-    """Esegui comando, scrivi output su file se specificato. Ritorna stdout."""
+def _run(cmd: list[str], timeout: int = 20) -> str:
     try:
-        result = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
         )
-        output = result.stdout + result.stderr
-        if out_file:
-            with open(out_file, "w") as f:
-                f.write(output)
-        return output
-    except subprocess.TimeoutExpired:
-        log.warning(f"Timeout: {' '.join(cmd)}")
-        return ""
-    except Exception as e:
-        log.error(f"_run {cmd[0]}: {e}")
-        return ""
-
-
-# ---------------------------------------------------------------------------
-# Checks
-# ---------------------------------------------------------------------------
-
-def check_ip_config(cfg, out_dir, alerter):
-    """IP, route, DNS resolver."""
-    findings = []
-    out = ""
-    out += _run(["ip", "addr"])
-    out += _run(["ip", "route"])
-    out += _run(["cat", "/etc/resolv.conf"])
-    with open(f"{out_dir}/ipconfig.txt", "w") as f:
-        f.write(out)
-
-    # Cerca IP multipli (multihoming)
-    ips = re.findall(r'inet\s+(\d+\.\d+\.\d+\.\d+)', out)
-    public_ips = [ip for ip in ips if not ip.startswith(("10.", "192.168.", "172.", "127.", "169.254."))]
-    if public_ips:
-        msg = f"IP pubblici rilevati sull'host: {public_ips}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="warning")
-
-    return findings
-
-
-def check_vlan(cfg, out_dir, alerter):
-    """VLAN tagging."""
-    findings = []
-    out = _run(["ip", "-d", "link", "show"], out_file=f"{out_dir}/vlan.txt")
-    if "vlan" in out.lower() or "802.1q" in out.lower():
-        msg = "VLAN tagging rilevato sull'interfaccia"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="info")
-    return findings
-
-
-def check_ipv6(cfg, out_dir, alerter):
-    """IPv6 addresses e route."""
-    findings = []
-    out = _run(["ip", "-6", "addr"], out_file=f"{out_dir}/ipv6.txt")
-    _run(["ip", "-6", "route"], out_file=f"{out_dir}/ipv6_route.txt")
-    addrs = re.findall(r'inet6\s+([^\s]+)', out)
-    global_v6 = [a for a in addrs if not a.startswith("fe80") and not a.startswith("::1")]
-    if global_v6:
-        msg = f"Indirizzi IPv6 globali attivi: {global_v6}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="info")
-    return findings
-
-
-def check_arp_scan(cfg, out_dir, alerter):
-    """ARP scan della subnet locale per scoprire host attivi."""
-    findings = []
-    subnet = cfg["General"]["local_subnet"]
-    out = _run(["arp-scan", "--localnet", subnet],
-               out_file=f"{out_dir}/arp_scan.txt", timeout=60)
-
-    # Conta host
-    hosts = re.findall(r'(\d+\.\d+\.\d+\.\d+)\s+([0-9a-f:]{17})', out.lower())
-    if hosts:
-        msg = f"Host L2 rilevati: {len(hosts)} — {[h[0] for h in hosts]}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="info")
-
-    # Host con vendor sconosciuto o "UNKNOWN"
-    unknowns = [h[0] for h in hosts if "unknown" in out.lower()]
-    if unknowns:
-        msg = f"Host con vendor MAC sconosciuto: {unknowns}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="warning")
-
-    return findings
-
-
-def check_mac_spoof(cfg, out_dir, alerter):
-    """Verifica se il MAC spoofing è fattibile (capability check)."""
-    findings = []
-    iface = cfg["General"]["interface"]
-    out = _run(["macchanger", "-s", iface], out_file=f"{out_dir}/mac_spoof.txt")
-    if "permanent" in out.lower() and "current" in out.lower():
-        perm    = re.search(r'Permanent MAC:\s+([0-9a-f:]{17})', out, re.I)
-        current = re.search(r'Current MAC:\s+([0-9a-f:]{17})', out, re.I)
-        if perm and current and perm.group(1).lower() != current.group(1).lower():
-            msg = f"MAC già modificato su {iface}: perm={perm.group(1)}, current={current.group(1)}"
-            findings.append(msg)
-            alerter.finding(AREA, msg, level="critical")
-        else:
-            msg = f"MAC spoofing praticabile su {iface} (macchanger disponibile)"
-            findings.append(msg)
-            alerter.finding(AREA, msg, level="warning")
-    return findings
-
-
-def check_arp_sniff(cfg, out_dir, alerter):
-    """
-    Cattura ARP per 30 sec, identifica pacchetti non destinati a noi.
-    Usa tcpdump invece di scapy per ridurre le dipendenze.
-    """
-    findings = []
-    iface  = cfg["General"]["interface"]
-    pcap   = f"{out_dir}/arp_sniff.pcap"
-    report = f"{out_dir}/foreign_arp.txt"
-
-    # Leggi il nostro MAC
-    try:
-        my_mac = open(f"/sys/class/net/{iface}/address").read().strip().lower()
+        return (proc.stdout or "") + (proc.stderr or "")
     except Exception:
-        my_mac = ""
+        return ""
 
-    # Cattura con tcpdump per 30 sec
-    _run(["tcpdump", "-i", iface, "-w", pcap, "arp", "-G", "30", "-W", "1"],
-         timeout=35)
 
-    # Analizza con tcpdump in modalità lettura
-    out = _run(["tcpdump", "-r", pcap, "-e", "-n", "arp"], timeout=10)
-    lines = out.splitlines()
+def _write(path: str, content: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except OSError:
+        pass
 
-    foreign = []
-    for line in lines:
-        # Cerca pacchetti ARP con destinazione MAC diversa dalla nostra
-        m = re.search(r'> ([0-9a-f:]{17})', line.lower())
-        if m and my_mac and m.group(1) not in (my_mac, "ff:ff:ff:ff:ff:ff"):
-            foreign.append(line.strip())
 
-    with open(report, "w") as f:
-        f.write(f"Nostro MAC: {my_mac}\n")
-        f.write(f"ARP packet totali: {len(lines)}\n")
-        f.write(f"Pacchetti non diretti a noi: {len(foreign)}\n\n")
-        f.write("\n".join(foreign))
+def _is_private_ipv4(ip: str) -> bool:
+    try:
+        return ipaddress.ip_address(ip).is_private
+    except Exception:
+        return False
 
-    if foreign:
-        msg = f"Sniffing ARP promiscuo: {len(foreign)} pacchetti altrui ricevuti"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="critical")
+
+def check_interface_snapshot(cfg, out_dir, alerter):
+    findings = []
+
+    iface = cfg["General"].get("interface", "")
+    ip_out = _run(["ip", "-4", "addr", "show", iface] if iface else ["ip", "-4", "addr", "show"])
+    route_out = _run(["ip", "route", "show"])
+    resolv_out = _run(["cat", "/etc/resolv.conf"])
+
+    _write(os.path.join(out_dir, "interface_snapshot.txt"), f"{ip_out}\n\n{route_out}\n\n{resolv_out}\n")
+
+    public_ips = []
+    for ip in re.findall(r"inet\s+(\d+\.\d+\.\d+\.\d+)", ip_out):
+        if ip.startswith("127."):
+            continue
+        if not _is_private_ipv4(ip):
+            public_ips.append(ip)
+
+    if public_ips:
+        msg = f"Public IPv4 assigned on local interface: {sorted(set(public_ips))}"
+        findings.append({"type": "net_public_ip", "severity": "info", "message": msg, "source": "net"})
+        # info by default to avoid false alarms on cloud hosts.
+        alerter.finding(AREA, msg, level="info")
 
     return findings
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def check_vlan_presence(cfg, out_dir, alerter):
+    findings = []
 
-PASSIVE_CHECKS = [
-    check_ip_config,
-    check_vlan,
-    check_ipv6,
-    check_mac_spoof,
-]
+    out = _run(["ip", "-d", "link", "show"])
+    _write(os.path.join(out_dir, "vlan_link.txt"), out)
 
-ACTIVE_ONLY_CHECKS = [
-    check_arp_scan,
-    check_arp_sniff,
-]
+    if " vlan " in out.lower() or "802.1q" in out.lower():
+        msg = "VLAN tagging detected on one or more interfaces"
+        findings.append({"type": "vlan_detect", "severity": "info", "message": msg, "source": "net"})
+        alerter.finding(AREA, msg, level="info")
 
-def run(cfg, out_dir, alerter, mode="active"):
-    """Esegui tutti i check NET. Ritorna lista di findings."""
-    all_findings = []
-    checks = list(PASSIVE_CHECKS)
+    return findings
+
+
+def check_arp_consistency(cfg, out_dir, alerter):
+    findings = []
+
+    out = _run(["arp", "-an"])
+    _write(os.path.join(out_dir, "arp_table.txt"), out)
+
+    mac_to_ips = {}
+    for line in out.splitlines():
+        m = re.search(r"\((\d+\.\d+\.\d+\.\d+)\)\s+at\s+([0-9a-f:]{17})", line.lower())
+        if not m:
+            continue
+        ip, mac = m.group(1), m.group(2)
+        mac_to_ips.setdefault(mac, set()).add(ip)
+
+    suspicious = {mac: sorted(ips) for mac, ips in mac_to_ips.items() if len(ips) >= 3}
+    if suspicious:
+        msg = f"ARP mapping anomaly (same MAC mapped to >=3 IPs): {suspicious}"
+        findings.append({"type": "arp_anomaly", "severity": "warning", "message": msg, "source": "net"})
+        alerter.finding(AREA, msg, level="warning")
+
+    return findings
+
+
+def check_l2_visibility(cfg, out_dir, alerter):
+    """Optional quick L2 probe using tcpdump in active mode only."""
+    findings = []
+
+    iface = cfg["General"].get("interface", "")
+    if not iface:
+        return findings
+
+    if not shutil.which("tcpdump"):
+        return findings
+
+    out = _run(["tcpdump", "-n", "-e", "-i", iface, "-c", "25"], timeout=15)
+    _write(os.path.join(out_dir, "l2_probe.txt"), out)
+
+    if "0x888e" in out or "EAPOL" in out.upper():
+        msg = "802.1X/EAPOL frames observed"
+        findings.append({"type": "dot1x", "severity": "info", "message": msg, "source": "net"})
+        alerter.finding(AREA, msg, level="info")
+
+    return findings
+
+
+def run(cfg, out_dir, alerter, mode="passive"):
+    findings = []
+
+    checks = [
+        check_interface_snapshot,
+        check_vlan_presence,
+        check_arp_consistency,
+    ]
+
     if mode == "active":
-        checks.extend(ACTIVE_ONLY_CHECKS)
+        checks.append(check_l2_visibility)
 
     for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:
-                all_findings.extend(result)
-        except Exception as e:
-            msg = f"`{check.__name__}` errore: {e}"
-            log.error(msg)
-            alerter.finding(AREA, msg, level="error")
-    return all_findings
+                findings.extend(result)
+        except Exception as exc:
+            alerter.finding(AREA, f"{check.__name__} error: {exc}", level="error")
+
+    return findings

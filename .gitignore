@@ -1,78 +1,46 @@
-# 🔸 Ambiente virtuale
-venv/
-.env/
-
-# 🔸 Cache Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# 🔸 File di configurazione sensibili
+# Local secrets and private context
+*.private
 .env
 *.env
-secrets.json
-config.yaml
-
-# 🔸 VS Code
-.vscode/
-
-# 🔸 Sistema operativo
-.DS_Store
-Thumbs.db
-
-# 🔸 Log e debug
-*.log
-
-# 🔸 Database locali
-*.sqlite3
-
-# 🔸 Build / distribuzione
-dist/
-build/
-*.egg-info/
-
-# 🔸 Test / coverage
-.coverage
-htmlcov/
-.pytest_cache/
-
-
-# Chiavi e certificati
+secrets.*
 *.pem
 *.key
 *.crt
 
-# Backup
-*.bak
-
-# Dump database
-*.sql
-
-# Ambienti
-venv/
-.env
-
-# Python
-__pycache__/
-*.pyc
-
-# IDE
-.vscode/
-
-# Logs
+# Local runtime / logs / generated reports
+runtime/
+logs/
 *.log
 
-# Secrets
-*.pem
-*.key
-*.env
-secrets.*
+# Local configuration
+config.ini
 
-# Database locali
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+venv/
+.venv/
+
+# Databases and dumps
 *.sqlite3
+*.sql
 
-# Build
+# Build artifacts
 dist/
 build/
-*.ini
+*.egg-info/
+
+# IDE / OS noise
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Codex internals
+.codex

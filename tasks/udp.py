@@ -1,166 +1,128 @@
-"""
-tasks/udp.py - UDP Area
-Checks: UDP random scan, QUIC, common UDP.
-"""
+"""tasks/udp.py - fast UDP reachability checks."""
 
-import random
+from __future__ import annotations
+
+import os
 import re
+import shutil
 import subprocess
-import logging
 
-log = logging.getLogger(__name__)
+
 AREA = "UDP"
 
 
-def _run(cmd, timeout=120):
+def _run(cmd: list[str], timeout: int = 15) -> str:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        return r.stdout + r.stderr
-    except subprocess.TimeoutExpired:
-        log.warning(f"Timeout: {' '.join(str(c) for c in cmd)}")
-        return ""
-    except Exception as e:
-        log.error(f"_run: {e}")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return (proc.stdout or "") + (proc.stderr or "")
+    except Exception:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _pick_ports(ranges_str, n_per_range=5):
-    """Selected N random port from range in config.ini ."""
-    ports = []
-    for r in ranges_str.split(","):
-        r = r.strip()
-        if "-" in r:
-            lo, hi = map(int, r.split("-"))
-            sample = random.sample(range(lo, hi + 1), min(n_per_range, hi - lo + 1))
-            ports.extend(sample)
-        else:
-            ports.append(int(r))
-    return ports
+def _write(path: str, content: str) -> None:
+    try:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except OSError:
+        pass
 
 
-COMMON_UDP = {
-    53:   "DNS",
-    67:   "DHCP",
-    123:  "NTP",
-    161:  "SNMP",
-    500:  "IKE/VPN",
-    4500: "NAT-T VPN",
-    443:  "QUIC",
-    1194: "OpenVPN",
-    5353: "mDNS",
-}
-
-
-# ---------------------------------------------------------------------------
-# Checks
-# ---------------------------------------------------------------------------
-
-def check_udp_random_scan(cfg, out_dir, alerter):
-    """Random UDP to external target."""
+def check_udp_dns(cfg, out_dir, alerter):
     findings = []
-    target  = cfg["General"]["target_external"]
-    ranges  = cfg.get("Scan", "udp_port_ranges", fallback="1-1024,40000-60000")
-    ports   = _pick_ports(ranges, n_per_range=6)
-    # Aggiungi sempre le porte UDP notevoli
-    ports   = list(set(ports + list(COMMON_UDP.keys())))
-    random.shuffle(ports)
-    port_str = ",".join(map(str, ports))
 
-    log.info(f"UDP scan to {target}: {port_str}")
-    out = _run(
-        ["nmap", "-sU", "-n", "-T2", "-p", port_str,
-         "--max-retries=1", "--host-timeout=60s",
-         "-oN", f"{out_dir}/udp_scan.txt", target],
-        timeout=180
-    )
+    target = cfg.get("General", "target_external", fallback="1.1.1.1").split(",")[0].strip()
+    out = _run(["dig", f"@{target}", "example.com", "A", "+short", "+time=2", "+tries=1"], timeout=8)
+    _write(os.path.join(out_dir, "udp_dns.txt"), out)
 
-    # Analisi risultati
-    open_ports   = re.findall(r'(\d+)/udp\s+open\b', out)
-    filtered_ports = re.findall(r'(\d+)/udp\s+open\|filtered', out)
-
-    with open(f"{out_dir}/udp_summary.txt", "w") as f:
-        f.write(f"Target: {target}\n")
-        f.write(f"Porte testate: {port_str}\n")
-        f.write(f"Aperte: {open_ports}\n")
-        f.write(f"Open|Filtered: {filtered_ports}\n")
-
-    if open_ports:
-        named = [f"{p}({COMMON_UDP.get(int(p), '?')})" for p in open_ports]
-        msg = f"UDP open to {target}: {named}"
-        findings.append(msg)
+    if re.search(r"\d+\.\d+\.\d+\.\d+", out):
+        msg = f"UDP DNS query succeeded to {target}:53"
+        findings.append({"type": "udp_dns", "severity": "info", "message": msg, "source": "udp"})
+        alerter.finding(AREA, msg, level="info")
+    else:
+        msg = f"UDP DNS query failed to {target}:53"
+        findings.append({"type": "udp_dns", "severity": "warning", "message": msg, "source": "udp"})
         alerter.finding(AREA, msg, level="warning")
 
     return findings
 
 
 def check_quic(cfg, out_dir, alerter):
-    """Check QUIC (UDP/443)."""
     findings = []
-    target = cfg["General"]["target_external"]
-    # curl con HTTP/3 per testare QUIC
+
+    if not shutil.which("curl"):
+        return findings
+
     out = _run(
-        ["curl", "-sf", "--http3", f"https://{target}", "-o", "/dev/null",
-         "-w", "%{http_version}", "--max-time", "10"],
-        timeout=15
+        [
+            "curl",
+            "-sS",
+            "--http3",
+            "https://cloudflare.com",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_version}",
+            "--max-time",
+            "8",
+        ],
+        timeout=12,
     )
-    with open(f"{out_dir}/quic.txt", "w") as f:
-        f.write(out)
+    _write(os.path.join(out_dir, "quic.txt"), out)
 
     if "3" in out:
-        msg = f"QUIC (HTTP/3) is ok to {target}"
-        findings.append(msg)
+        msg = "QUIC/HTTP3 reachable"
+        findings.append({"type": "quic", "severity": "info", "message": msg, "source": "udp"})
         alerter.finding(AREA, msg, level="info")
-    else:
-        msg = f"QUIC not available verso {target}"
-        findings.append(msg)
 
     return findings
 
 
-def check_ntp(cfg, out_dir, alerter):
-    """NTP (UDP/123) - amplification vector."""
+def check_udp_surface(cfg, out_dir, alerter):
     findings = []
-    target = cfg["General"]["target_external"]
-    out = _run(
-        ["ntpdate", "-q", "-u", target],
-        timeout=10
-    )
-    with open(f"{out_dir}/ntp.txt", "w") as f:
-        f.write(out)
 
-    if "stratum" in out.lower() or "offset" in out.lower():
-        msg = f"NTP reply from {target} (UDP/123)"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="info")
+    if not shutil.which("nmap"):
+        return findings
+
+    target = cfg.get("General", "target_external", fallback="1.1.1.1").split(",")[0].strip()
+    out = _run(
+        [
+            "nmap",
+            "-sU",
+            "-n",
+            "-T2",
+            "-p",
+            "53,67,123,161,500,4500,1194",
+            "--max-retries=1",
+            "--host-timeout=20s",
+            target,
+        ],
+        timeout=45,
+    )
+    _write(os.path.join(out_dir, "udp_surface.txt"), out)
+
+    open_ports = sorted(set(re.findall(r"(\d+)/udp\s+open\b", out)))
+    if open_ports:
+        msg = f"Open UDP ports on target {target}: {open_ports}"
+        findings.append({"type": "udp_surface", "severity": "warning", "message": msg, "source": "udp"})
+        # warning only in active mode because this is reconnaissance info.
+        alerter.finding(AREA, msg, level="warning")
 
     return findings
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def run(cfg, out_dir, alerter, mode="passive"):
+    findings = []
 
-PASSIVE_CHECKS = [check_quic, check_ntp]
-
-ACTIVE_ONLY_CHECKS = [check_udp_random_scan]
-
-def run(cfg, out_dir, alerter, mode="active"):
-    all_findings = []
-    checks = list(PASSIVE_CHECKS)
+    checks = [check_udp_dns, check_quic]
     if mode == "active":
-        checks.extend(ACTIVE_ONLY_CHECKS)
+        checks.append(check_udp_surface)
 
     for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:
-                all_findings.extend(result)
-        except Exception as e:
-            msg = f"`{check.__name__}` error: {e}"
-            log.error(msg)
-            alerter.finding(AREA, msg, level="error")
-    return all_findings
+                findings.extend(result)
+        except Exception as exc:
+            alerter.finding(AREA, f"{check.__name__} error: {exc}", level="error")
+
+    return findings

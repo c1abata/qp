@@ -1,172 +1,248 @@
 #!/usr/bin/env python3
-"""
-net_audit.py - script rampa di lancio per i vari test
-Principi: semplicità, chiarezza, zero magia nascosta. (antirez-style)
+"""QuickPeek main orchestrator.
+
+Antirez-inspired principles applied:
+- one explicit control flow
+- small modules with clear responsibility
+- no hidden global magic
+- robust behavior under partial failures
 """
 
+from __future__ import annotations
+
+import argparse
+import configparser
+import logging
 import os
 import sys
-import logging
-import configparser
-import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
 
-from lib.nic      import detect_network_params
-from lib.alert    import Alerter
-from tasks        import net, domain, dns, udp, presec, hygiene, health
+from lib.alert import Alerter
+from lib import correlator, logger as qp_logger, nic, runtime, taskloader, tgcontrol
 
-def load_config(path):
+
+LOG = logging.getLogger("quickpeek")
+
+
+def _ensure_sections(cfg: configparser.ConfigParser) -> None:
+    for section in [
+        "General",
+        "Network",
+        "Telegram",
+        "Alerts",
+        "Policy",
+        "Tasks",
+        "Scan",
+        "DNS",
+        "Hygiene",
+        "Bluetooth",
+    ]:
+        if section not in cfg:
+            cfg[section] = {}
+
+    defaults = {
+        ("General", "mode"): "passive",
+        ("General", "target_external"): "1.1.1.1",
+        ("General", "interface"): "auto",
+        ("Network", "target_subnet"): "auto",
+        ("Telegram", "enabled"): "true",
+        ("Tasks", "enabled"): ",".join(taskloader.DEFAULT_TASKS),
+        ("Alerts", "send_info"): "false",
+        ("Alerts", "send_warning"): "true",
+        ("Alerts", "send_critical"): "true",
+        ("Policy", "dns_plaintext_forbidden"): "false",
+        ("Policy", "doh_dot_forbidden"): "false",
+        ("Policy", "enable_snmp_default_check"): "false",
+    }
+
+    for (section, key), value in defaults.items():
+        if not cfg.get(section, key, fallback="").strip():
+            cfg[section][key] = value
+
+
+def load_config(path: str) -> configparser.ConfigParser:
     cfg = configparser.ConfigParser()
-    read_ok = cfg.read(path)
-    if not read_ok:
-        print(f"[WARN] config.ini not found in '{path}', use default.", file=sys.stderr)
-    # Garantisce che la sezione [General] esista sempre
-    if "General" not in cfg:
-        cfg["General"] = {}
-    if "Telegram" not in cfg:
-        cfg["Telegram"] = {}
-    if "Scan" not in cfg:
-        cfg["Scan"] = {}
-    if "DNS" not in cfg:
-        cfg["DNS"] = {}
+    loaded = cfg.read(path)
+    if not loaded:
+        print(f"[WARN] config file not found: {path}. Using defaults.", file=sys.stderr)
+    _ensure_sections(cfg)
     return cfg
 
-def setup_logging(base_dir):
-    os.makedirs(base_dir, exist_ok=True)
-    logging.basicConfig(
-        filename=f"{base_dir}/main.log",
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s"
-    )
-    logging.getLogger().addHandler(logging.StreamHandler(sys.stderr))
+
+def _first_target(raw_value: str) -> str:
+    values = [x.strip() for x in raw_value.split(",") if x.strip()]
+    return values[0] if values else "1.1.1.1"
 
 
-def choose_base_dir():
-    date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    preferred_root = "/var/log/net_audit"
-    fallback_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+def _severity_counts(events: list[dict]) -> dict:
+    counts = {"info": 0, "warning": 0, "critical": 0, "error": 0}
+    for event in events:
+        sev = str(event.get("severity", "warning")).lower()
+        if sev not in counts:
+            sev = "warning"
+        counts[sev] += 1
+    counts["total_events"] = sum(counts.values())
+    return counts
 
-    for root in (preferred_root, fallback_root):
-        try:
-            os.makedirs(root, exist_ok=True)
-            test_file = os.path.join(root, ".write_test")
-            with open(test_file, "w") as f:
-                f.write("")
-            os.remove(test_file)
-            return os.path.join(root, date_str)
-        except OSError:
-            continue
 
-    raise OSError("No writable log directory available")
+def _summary_text(mode: str, net: dict, summary: dict, events: list[dict]) -> str:
+    lines = [
+        "QuickPeek summary",
+        f"mode: {mode}",
+        f"iface: {net.get('iface')}",
+        f"subnet: {net.get('subnet')}",
+        f"events: total={summary['total_events']} info={summary['info']} warning={summary['warning']} critical={summary['critical']} error={summary['error']}",
+    ]
 
-def main():
+    top = events[:10]
+    if top:
+        lines.append("top findings:")
+        for item in top:
+            sev = item.get("severity", "warning")
+            src = item.get("source", "core")
+            msg = str(item.get("message", "")).strip()
+            lines.append(f"- [{sev}] [{src}] {msg[:180]}")
+
+    return "\n".join(lines)
+
+
+def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="QuickPeek")
-    _script_dir = os.path.dirname(os.path.abspath(__file__))
-    parser.add_argument("--config", default=os.path.join(_script_dir, "config.ini"))
-    parser.add_argument("--iface",  help="Override interface")
-    parser.add_argument("--target", help="Override target external")
+    parser.add_argument("--config", default=os.path.join(SCRIPT_DIR, "config.ini"))
+    parser.add_argument("--iface", help="Override interface")
+    parser.add_argument("--subnet", help="Override local subnet (CIDR)")
+    parser.add_argument("--target", help="Override external target")
     parser.add_argument("--mode", choices=["passive", "active"], help="Override operational mode")
-    parser.add_argument(
-        "--tasks",
-        default="NET,DOMAIN,DNS,UDP,PRESEC,HYGIENE,HEALTH",
-        help="Flagged Task to run (comma-separated). Es: --tasks NET,HYGIENE"
-    )
-    args = parser.parse_args()
+    parser.add_argument("--tasks", help="Comma-separated task list")
+    parser.add_argument("--no-telegram", action="store_true", help="Disable Telegram control/alerts for this run")
+    parser.add_argument("--quiet", action="store_true", help="Disable stderr log output")
+    return parser
 
+
+def main() -> int:
+    args = _build_parser().parse_args()
     cfg = load_config(args.config)
 
-    iface = args.iface or cfg.get("General", "interface", fallback=None)
-    net_params = detect_network_params(iface)
+    if args.no_telegram:
+        cfg["Telegram"]["bot_token"] = ""
+        cfg["Telegram"]["chat_id"] = ""
 
-    if net_params["interface"]:
-        cfg["General"]["interface"]    = net_params["interface"]
-    if net_params["local_subnet"]:
-        cfg["General"]["local_subnet"] = net_params["local_subnet"]
-    if net_params["gateway"]:
-        cfg["General"]["gateway"]      = net_params["gateway"]
+    state = runtime.load_state()
 
-    target_external = (
-        args.target
-        or net_params.get("dhcp_target")
-        or cfg.get("General", "target_external", fallback="1.1.1.1")
-    )
-    cfg["General"]["target_external"] = target_external
+    available_tasks = list(taskloader.DEFAULT_TASKS)
+    tg_actions = tgcontrol.process(cfg, state, available_tasks)
 
-    alerter = Alerter(cfg)
-    default_mode = cfg.get("General", "mode", fallback="passive").strip().lower() or "passive"
-    mode = (args.mode or alerter.fetch_mode_override(default_mode)).lower()
-    if mode not in ("passive", "active"):
+    if tg_actions.get("messages"):
+        for line in tg_actions["messages"]:
+            print(f"[TG] {line}", file=sys.stderr)
+
+    overrides = dict(state.get("overrides", {})) if isinstance(state.get("overrides"), dict) else {}
+    if args.iface:
+        overrides["interface"] = args.iface
+    if args.subnet:
+        overrides["subnet"] = args.subnet
+
+    net = nic.get_network_info(cfg, overrides=overrides)
+
+    if net.get("iface"):
+        cfg["General"]["interface"] = str(net["iface"])
+    if net.get("subnet"):
+        cfg["General"]["local_subnet"] = str(net["subnet"])
+    if net.get("gateway"):
+        cfg["General"]["gateway"] = str(net["gateway"])
+
+    target_external = args.target or net.get("dhcp_target") or cfg.get("General", "target_external", fallback="1.1.1.1")
+    cfg["General"]["target_external"] = _first_target(target_external)
+
+    mode = args.mode or overrides.get("mode") or cfg.get("General", "mode", fallback="passive")
+    mode = str(mode).strip().lower()
+    if mode not in {"passive", "active"}:
         mode = "passive"
     cfg["General"]["mode"] = mode
 
-    base_dir = choose_base_dir()
-    setup_logging(base_dir)
+    for policy_key in ["dns_plaintext_forbidden", "doh_dot_forbidden", "enable_snmp_default_check"]:
+        if policy_key in overrides:
+            cfg["Policy"][policy_key] = str(overrides[policy_key]).lower()
 
-    logging.info("=== QuickPeek v. 0 - started ===")
-    logging.info(f"Interface : {cfg['General']['interface']}")
-    logging.info(f"Subnet    : {cfg['General']['local_subnet']}")
-    logging.info(f"Gateway   : {cfg['General'].get('gateway','?')}")
-    logging.info(f"Target ext: {cfg['General']['target_external']}")
-    logging.info(f"Mode      : {cfg['General']['mode']}")
+    configured_tasks = args.tasks or overrides.get("tasks") or cfg.get("Tasks", "enabled", fallback="")
+    task_names = taskloader.parse_tasks(configured_tasks)
 
-    alerter.send(
-        f"🚀 *QuickPeek v. 0 - started*\n"
-        f"Mode: `{cfg['General']['mode']}`\n"
-        f"Iface: `{cfg['General']['interface']}`\n"
-        f"Subnet: `{cfg['General']['local_subnet']}`\n"
-        f"Gateway: `{cfg['General'].get('gateway','?')}`\n"
-        f"Target: `{cfg['General']['target_external']}`",
-        level="info"
-    )
+    loaded_tasks, load_errors = taskloader.load_tasks(task_names)
 
-    ALL_TASKS = {
-        "NET":     net.run,
-        "DOMAIN":  domain.run,
-        "DNS":     dns.run,
-        "UDP":     udp.run,
-        "PRESEC":  presec.run,
-        "HYGIENE": hygiene.run,
-        "HEALTH": health.run,
-    }
+    p = runtime.paths()
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    run_dir = os.path.join(p["tasks_dir"], run_id)
+    os.makedirs(run_dir, exist_ok=True)
 
-    selected = [t.strip().upper() for t in args.tasks.split(",")]
-    TASKS = [(name, ALL_TASKS[name]) for name in selected if name in ALL_TASKS]
+    log_file = os.path.join(p["logs_dir"], f"audit-{run_id}.log")
+    qp_logger.configure(log_file=log_file, verbose=not args.quiet)
 
-    results = {}
-    for name, func in TASKS:
-        task_dir = f"{base_dir}/{name}"
-        os.makedirs(task_dir, exist_ok=True)
-        logging.info(f"--- Start Peek {name} ---")
+    alerter = Alerter(cfg)
+
+    LOG.info("QuickPeek started")
+    LOG.info("mode=%s iface=%s subnet=%s gateway=%s target=%s", mode, net.get("iface"), net.get("subnet"), net.get("gateway"), cfg["General"].get("target_external"))
+    LOG.info("tasks=%s", ",".join(task_names))
+
+    events: list[dict] = []
+
+    for err in load_errors:
+        LOG.warning(err)
+        events.append({
+            "type": "task_load_error",
+            "severity": "warning",
+            "message": err,
+            "source": "taskloader",
+        })
+
+    for task_name, module in loaded_tasks:
+        task_out = os.path.join(run_dir, task_name.upper())
+        os.makedirs(task_out, exist_ok=True)
+
+        LOG.info("task start %s", task_name)
+        ctx = {
+            "cfg": cfg,
+            "out_dir": task_out,
+            "alerter": alerter,
+            "mode": mode,
+            "net": net,
+            "state": state,
+        }
+
         try:
-            findings = func(cfg, task_dir, alerter, mode=mode)
-            results[name] = findings or []
-            logging.info(f"{name} complete: {len(results[name])} finding(s)")
+            raw = taskloader.execute_task(module, task_name, ctx)
+            normalized = taskloader.normalize_result(task_name, raw)
+            events.extend(normalized)
+            LOG.info("task end %s findings=%d", task_name, len(normalized))
         except Exception as exc:
-            msg = f"❌ *{name}* critical error: `{exc}`"
-            logging.error(msg)
-            alerter.send(msg, level="error")
-            results[name] = []
+            LOG.exception("task error %s: %s", task_name, exc)
+            events.append({
+                "type": "task_error",
+                "severity": "warning",
+                "message": f"{task_name} failed: {exc}",
+                "source": task_name,
+            })
 
-    total = sum(len(v) for v in results.values())
-    summary_lines = [
-        f"📋 *Quickpeek Summary*",
-        f"Mode: `{cfg['General']['mode']}`",
-        f"Subnet: `{cfg['General']['local_subnet']}`",
-        f"Total findings: *{total}*", "",
-    ]
-    for name, findings in results.items():
-        icon = "🔴" if findings else "✅"
-        summary_lines.append(f"{icon} *{name}*: {len(findings)} finding(s)")
-        for f in findings[:5]:
-            summary_lines.append(f"  • {f[:120]}")
-        if len(findings) > 5:
-            summary_lines.append(f"      … e more {len(findings)-5}, see logs.")
+    correlated = correlator.process(events)
+    summary = _severity_counts(correlated)
 
-    alerter.send("\n".join(summary_lines), level="info")
-    logging.info(f"=== Terminated peeking. {total} total finding(s) ===")
+    for event in correlated:
+        LOG.info("event type=%s severity=%s source=%s message=%s", event.get("type"), event.get("severity"), event.get("source"), event.get("message"))
+
+    alerter.dispatch_events(correlated)
+    summary_text = _summary_text(mode=mode, net=net, summary=summary, events=correlated)
+    alerter.send(summary_text, level="info")
+
+    runtime.save_last_run(state=state, network=net, mode=mode, summary=summary, events=correlated)
+
+    LOG.info("QuickPeek completed total_events=%s", summary["total_events"])
+    print(summary_text)
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -1,134 +1,132 @@
-"""
-tasks/domain.py - DOMAIN Area
-Checks: Active Directory (SRV records, LDAP ports), mDNS, NetBIOS.
-"""
+"""tasks/domain.py - lightweight domain/AD exposure checks."""
+
+from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
-import logging
 
-log = logging.getLogger(__name__)
+
 AREA = "DOMAIN"
 
 
-def _run(cmd, out_file=None, timeout=20):
+def _run(cmd: list[str], timeout: int = 20) -> str:
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        out = r.stdout + r.stderr
-        if out_file:
-            open(out_file, "w").write(out)
-        return out
-    except subprocess.TimeoutExpired:
-        return ""
-    except Exception as e:
-        log.error(f"_run {cmd[0]}: {e}")
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return (proc.stdout or "") + (proc.stderr or "")
+    except Exception:
         return ""
 
 
-# ---------------------------------------------------------------------------
-# Checks
-# ---------------------------------------------------------------------------
-
-def check_ad_srv(cfg, out_dir, alerter):
-    """Interroga record SRV tipici di Active Directory."""
-    findings = []
-    # Ricava il dominio di ricerca da resolv.conf
+def _write(path: str, content: str) -> None:
     try:
-        resolv = open("/etc/resolv.conf").read()
-        m = re.search(r'search\s+(\S+)', resolv)
-        domain = m.group(1) if m else "local"
-    except Exception:
-        domain = "local"
-
-    srv_records = [
-        f"_ldap._tcp.{domain}",
-        f"_kerberos._tcp.{domain}",
-        f"_gc._tcp.{domain}",
-        f"_kpasswd._tcp.{domain}",
-    ]
-    found = []
-    with open(f"{out_dir}/ad_srv.txt", "w") as f:
-        for rec in srv_records:
-            out = _run(["dig", rec, "SRV", "+short", "+time=3"])
-            f.write(f"=== {rec} ===\n{out}\n")
-            if out.strip():
-                found.append(rec)
-
-    if found:
-        msg = f"Active Directory SRV records trovati: {found}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="critical")
-
-    return findings
-
-
-def check_ldap_ports(cfg, out_dir, alerter):
-    """Scansione porte LDAP sulla subnet locale."""
-    findings = []
-    subnet = cfg["General"]["local_subnet"]
-    out = _run(
-        ["nmap", "-n", "-T2", "-p", "389,636,3268,3269", "--open", "--max-retries=1",
-         "-oG", f"{out_dir}/ldap_scan.gnmap", subnet],
-        timeout=120
-    )
-    # Leggi il gnmap per host trovati
-    gnmap = ""
-    try:
-        gnmap = open(f"{out_dir}/ldap_scan.gnmap").read()
-    except Exception:
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(content)
+    except OSError:
         pass
 
-    hosts_with_ldap = re.findall(r'Host:\s+(\d+\.\d+\.\d+\.\d+)[^\n]+open', gnmap)
-    if hosts_with_ldap:
-        msg = f"Porte LDAP/AD aperte su: {hosts_with_ldap}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="critical")
 
-    return findings
+def _search_domain() -> str:
+    try:
+        resolv = open("/etc/resolv.conf", "r", encoding="utf-8", errors="ignore").read()
+    except OSError:
+        return ""
+
+    for pattern in [r"^search\s+(\S+)", r"^domain\s+(\S+)"]:
+        m = re.search(pattern, resolv, re.M)
+        if m:
+            value = m.group(1).strip().strip(".")
+            if value and value != "local":
+                return value
+    return ""
 
 
-def check_mdns_netbios(cfg, out_dir, alerter):
-    """Rileva servizi mDNS e NetBIOS per fingerprinting OS/host."""
+def check_ad_records(cfg, out_dir, alerter):
     findings = []
-    subnet = cfg["General"]["local_subnet"]
-    # nmap con script smb e mdns
-    out = _run(
-        ["nmap", "-n", "-T2", "-p", "5353,137,138,139,445", "--open", "--max-retries=1",
-         "--script", "nbstat,dns-service-discovery",
-         "-oN", f"{out_dir}/mdns_netbios.txt", subnet],
-        timeout=120
-    )
-    if "445/open" in out or "139/open" in out:
-        hosts = re.findall(r'(\d+\.\d+\.\d+\.\d+).*?445/open', out)
-        msg = f"Servizi SMB/NetBIOS attivi: {hosts}"
-        findings.append(msg)
-        alerter.finding(AREA, msg, level="warning")
+    domain = _search_domain()
+    if not domain:
+        return findings
+
+    records = [
+        f"_ldap._tcp.{domain}",
+        f"_kerberos._tcp.{domain}",
+    ]
+
+    lines = []
+    found = []
+    for rec in records:
+        out = _run(["dig", rec, "SRV", "+short", "+time=2"])
+        lines.append(f"== {rec} ==\n{out}\n")
+        if out.strip():
+            found.append(rec)
+
+    _write(os.path.join(out_dir, "ad_srv_records.txt"), "\n".join(lines))
+
+    if found:
+        msg = f"AD-related SRV records found: {found}"
+        findings.append({"type": "ad_srv", "severity": "info", "message": msg, "source": "domain"})
+        # Informational: presence is not a vulnerability by itself.
+        alerter.finding(AREA, msg, level="info")
 
     return findings
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
+def check_ldap_smb_surface(cfg, out_dir, alerter):
+    findings = []
 
-PASSIVE_CHECKS = [check_ad_srv]
+    subnet = cfg["General"].get("local_subnet", "")
+    if not subnet:
+        return findings
 
-ACTIVE_ONLY_CHECKS = [check_ldap_ports, check_mdns_netbios]
+    if not shutil.which("nmap"):
+        return findings
 
-def run(cfg, out_dir, alerter, mode="active"):
-    all_findings = []
-    checks = list(PASSIVE_CHECKS)
+    out = _run(
+        [
+            "nmap",
+            "-n",
+            "-T2",
+            "-p",
+            "389,636,445",
+            "--open",
+            "--max-retries=1",
+            "--host-timeout=20s",
+            subnet,
+        ],
+        timeout=70,
+    )
+    _write(os.path.join(out_dir, "ldap_smb_surface.txt"), out)
+
+    ldap_hosts = sorted(set(re.findall(r"Nmap scan report for\s+(\S+)(?:.|\n)*?389/tcp\s+open", out)))
+    smb_hosts = sorted(set(re.findall(r"Nmap scan report for\s+(\S+)(?:.|\n)*?445/tcp\s+open", out)))
+
+    if ldap_hosts:
+        msg = f"LDAP services exposed on LAN hosts: {ldap_hosts[:10]}"
+        findings.append({"type": "ldap_surface", "severity": "info", "message": msg, "source": "domain"})
+        alerter.finding(AREA, msg, level="info")
+
+    if smb_hosts:
+        msg = f"SMB services exposed on LAN hosts: {smb_hosts[:10]}"
+        findings.append({"type": "smb_surface", "severity": "info", "message": msg, "source": "domain"})
+        alerter.finding(AREA, msg, level="info")
+
+    return findings
+
+
+def run(cfg, out_dir, alerter, mode="passive"):
+    findings = []
+
+    checks = [check_ad_records]
     if mode == "active":
-        checks.extend(ACTIVE_ONLY_CHECKS)
+        checks.append(check_ldap_smb_surface)
 
     for check in checks:
         try:
             result = check(cfg, out_dir, alerter)
             if result:
-                all_findings.extend(result)
-        except Exception as e:
-            msg = f"`{check.__name__}` errore: {e}"
-            log.error(msg)
-            alerter.finding(AREA, msg, level="error")
-    return all_findings
+                findings.extend(result)
+        except Exception as exc:
+            alerter.finding(AREA, f"{check.__name__} error: {exc}", level="error")
+
+    return findings

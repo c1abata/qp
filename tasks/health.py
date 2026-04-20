@@ -14,8 +14,9 @@ def has_ip():
 
 
 def has_internet(target="1.1.1.1"):
+    host = str(target).split(",")[0].strip() or "1.1.1.1"
     try:
-        socket.create_connection((target, 53), timeout=3)
+        socket.create_connection((host, 53), timeout=3)
         return True
     except Exception:
         return False
@@ -32,13 +33,13 @@ def run(cfg, out_dir, alerter, mode="active"):
 
     if not ip_ok:
         msg = "❌ Nessun IP sulle interfacce"
-        findings.append(msg)
+        findings.append({"type": "health_ip", "severity": "critical", "message": msg, "source": "health"})
         alerter.finding(AREA, msg, level="critical")
         bt.send(msg)
 
     if not net_ok:
         msg = "❌ Internet NON raggiungibile"
-        findings.append(msg)
+        findings.append({"type": "health_internet", "severity": "critical", "message": msg, "source": "health"})
         alerter.finding(AREA, msg, level="critical")
         bt.send(msg)
 

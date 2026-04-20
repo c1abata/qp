@@ -1,47 +1,59 @@
-# /opt/net_audit/config.ini
-# Molti valori sono auto-rilevati da lib/nic.py — modificare solo se necessario.
+# QuickPeek configuration template
+# Copy as config.ini and edit only required values.
 
 [General]
-# Interfaccia di rete (auto-rilevata se non specificata)
-interface =
-# Subnet locale CIDR (auto-rilevata)
+# auto | explicit iface (eth0, enp3s0, wlan0)
+interface = auto
+# auto-detected from interface unless overridden by Network.target_subnet
 local_subnet =
-# Gateway di default (auto-rilevato)
 gateway =
-# Modalita operativa: passive (default) o active
+# passive | active
 mode = passive
-# Target esterno per test di connettività (DHCP opt-252 > questo valore)
+# One or more targets (comma-separated). First one is used by most checks.
 target_external = 1.1.1.1,8.8.8.8
+# Generic timeout hint for custom tasks
 timeout = 10
 
+[Network]
+# auto | CIDR (e.g. 192.168.1.0/24)
+target_subnet = auto
+
 [Telegram]
-# Token del bot Telegram (lascia vuoto per disabilitare alerting)
+# Leave bot_token/chat_id empty to disable bot + Telegram alerts
+enabled = true
 bot_token =
-# Chat ID del canale/gruppo dove ricevere le notifiche
 chat_id =
-# Comandi supportati dal bot:
-# /mode passive
-# /mode active
+poll_interval = 5
+
+[Alerts]
+send_info = false
+send_warning = true
+send_critical = true
+
+[Policy]
+# If true, plain DNS (port 53) is treated as a policy violation.
+dns_plaintext_forbidden = false
+# If true, DoH/DoT reachability is treated as a policy violation.
+doh_dot_forbidden = false
+# Optional active check (can add runtime if enabled).
+enable_snmp_default_check = false
+
+[Tasks]
+# Comma-separated task module names from ./tasks
+# Legacy and v4 tasks can coexist.
+enabled = net,domain,dns,udp,presec,hygiene,health,net_discovery,passive_scan,dhcp_rogue,vlan_8021x,lldp_map,mitm_detect,tor,tldcheck,streaming,dns_tunnelling,check_network_doh_dot_policy
 
 [Scan]
-# Porte TCP da scansionare nella subnet locale (task PRESEC)
-tcp_service_ports = 1-1024,8080,8443,8181,3389,4444,8001,8010,5985,3000,666,5678,44380,44322,5872,3600,500,5985,8001,8010,5900
-
-# Range porte UDP per scan randomizzato (task UDP)
+# Task PRESEC / NET scan hints
+tcp_service_ports = 1-1024,8080,8443,8181,3389,4444,8001,8010,5985,3000,666,5678,44380,44322,5872,3600,500,5900
 udp_port_ranges = 1-1024,40000-60000
 
 [DNS]
-# Hostname usato per i test DNS standard
 test_hostname = example.com
 
 [Hygiene]
-# Soglia giorni prima della scadenza certificato TLS per warning
 cert_expiry_warning_days = 30
 
-
-
-# Community SNMP aggiuntive da testare (oltre alle default: public, private)
-# snmp_extra_communities = mycommunity,internal
-
-# Porte di gestione aggiuntive da controllare (oltre alle built-in)
-# extra_mgmt_ports = 9090,15672
+[Bluetooth]
+# Optional Bluetooth fallback target MAC
+# device_mac = AA:BB:CC:DD:EE:FF
