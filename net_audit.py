@@ -23,7 +23,7 @@ if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 
 from lib.alert import Alerter
-from lib import correlator, logger as qp_logger, nic, runtime, taskloader, tgcontrol
+from lib import correlator, logger as qp_logger, nic, runtime, safety, taskloader, tgcontrol
 
 
 LOG = logging.getLogger("quickpeek")
@@ -41,23 +41,28 @@ def _ensure_sections(cfg: configparser.ConfigParser) -> None:
         "DNS",
         "Hygiene",
         "Bluetooth",
+        "Safety",
     ]:
         if section not in cfg:
             cfg[section] = {}
 
     defaults = {
         ("General", "mode"): "passive",
+        ("General", "profile"): "peek",
         ("General", "target_external"): "1.1.1.1",
         ("General", "interface"): "auto",
         ("Network", "target_subnet"): "auto",
         ("Telegram", "enabled"): "true",
         ("Tasks", "enabled"): ",".join(taskloader.DEFAULT_TASKS),
+        ("Tasks", "peek_enabled"): ",".join(taskloader.PEEK_TASKS),
         ("Alerts", "send_info"): "false",
         ("Alerts", "send_warning"): "true",
         ("Alerts", "send_critical"): "true",
         ("Policy", "dns_plaintext_forbidden"): "false",
         ("Policy", "doh_dot_forbidden"): "false",
         ("Policy", "enable_snmp_default_check"): "false",
+        ("Safety", "max_scan_hosts"): "256",
+        ("Safety", "allow_large_scan"): "false",
     }
 
     for (section, key), value in defaults.items():
@@ -118,6 +123,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--subnet", help="Override local subnet (CIDR)")
     parser.add_argument("--target", help="Override external target")
     parser.add_argument("--mode", choices=["passive", "active"], help="Override operational mode")
+    parser.add_argument("--profile", choices=["peek", "audit"], help="Task profile: safe local peek or full audit")
     parser.add_argument("--tasks", help="Comma-separated task list")
     parser.add_argument("--no-telegram", action="store_true", help="Disable Telegram control/alerts for this run")
     parser.add_argument("--quiet", action="store_true", help="Disable stderr log output")
@@ -165,12 +171,26 @@ def main() -> int:
         mode = "passive"
     cfg["General"]["mode"] = mode
 
+    profile = args.profile or overrides.get("profile") or cfg.get("General", "profile", fallback="peek")
+    profile = str(profile).strip().lower()
+    if profile not in {"peek", "audit"}:
+        profile = "peek"
+    cfg["General"]["profile"] = profile
+
     for policy_key in ["dns_plaintext_forbidden", "doh_dot_forbidden", "enable_snmp_default_check"]:
         if policy_key in overrides:
             cfg["Policy"][policy_key] = str(overrides[policy_key]).lower()
 
-    configured_tasks = args.tasks or overrides.get("tasks") or cfg.get("Tasks", "enabled", fallback="")
+    configured_tasks = args.tasks or overrides.get("tasks")
+    if not configured_tasks:
+        key = "peek_enabled" if profile == "peek" else "enabled"
+        configured_tasks = cfg.get("Tasks", key, fallback="")
     task_names = taskloader.parse_tasks(configured_tasks)
+    peek_tasks = taskloader.parse_tasks(cfg.get("Tasks", "peek_enabled", fallback=""))
+    task_names = safety.select_tasks(profile, task_names, peek_tasks)
+
+    max_hosts = cfg.getint("Safety", "max_scan_hosts", fallback=256)
+    allow_large_scan = safety.bool_value(cfg.get("Safety", "allow_large_scan", fallback="false"))
 
     loaded_tasks, load_errors = taskloader.load_tasks(task_names)
 
@@ -185,7 +205,7 @@ def main() -> int:
     alerter = Alerter(cfg)
 
     LOG.info("QuickPeek started")
-    LOG.info("mode=%s iface=%s subnet=%s gateway=%s target=%s", mode, net.get("iface"), net.get("subnet"), net.get("gateway"), cfg["General"].get("target_external"))
+    LOG.info("profile=%s mode=%s iface=%s subnet=%s gateway=%s target=%s", profile, mode, net.get("iface"), net.get("subnet"), net.get("gateway"), cfg["General"].get("target_external"))
     LOG.info("tasks=%s", ",".join(task_names))
 
     events: list[dict] = []
@@ -200,6 +220,17 @@ def main() -> int:
         })
 
     for task_name, module in loaded_tasks:
+        block_reason = safety.blocked_task_reason(task_name, mode, net.get("subnet"), max_hosts, allow_large_scan)
+        if block_reason:
+            LOG.warning("%s: %s", task_name, block_reason)
+            events.append({
+                "type": "safety_guard",
+                "severity": "warning",
+                "message": f"{task_name}: {block_reason}",
+                "source": "safety",
+            })
+            continue
+
         task_out = os.path.join(run_dir, task_name.upper())
         os.makedirs(task_out, exist_ok=True)
 
@@ -211,6 +242,7 @@ def main() -> int:
             "mode": mode,
             "net": net,
             "state": state,
+            "profile": profile,
         }
 
         try:
@@ -234,10 +266,10 @@ def main() -> int:
         LOG.info("event type=%s severity=%s source=%s message=%s", event.get("type"), event.get("severity"), event.get("source"), event.get("message"))
 
     alerter.dispatch_events(correlated)
-    summary_text = _summary_text(mode=mode, net=net, summary=summary, events=correlated)
+    summary_text = _summary_text(mode=f"{profile}/{mode}", net=net, summary=summary, events=correlated)
     alerter.send(summary_text, level="info")
 
-    runtime.save_last_run(state=state, network=net, mode=mode, summary=summary, events=correlated)
+    runtime.save_last_run(state=state, network=net, mode=f"{profile}/{mode}", summary=summary, events=correlated)
 
     LOG.info("QuickPeek completed total_events=%s", summary["total_events"])
     print(summary_text)

@@ -34,6 +34,16 @@ DEFAULT_TASKS = [
     "check_network_doh_dot_policy",
 ]
 
+PEEK_TASKS = [
+    "quickpeek",
+    "net",
+    "hygiene",
+    "mitm_detect",
+    "lldp_map",
+    "passive_scan",
+    "vlan_8021x",
+]
+
 
 def parse_tasks(value: str | None) -> List[str]:
     if not value:

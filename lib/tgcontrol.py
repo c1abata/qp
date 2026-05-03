@@ -6,6 +6,7 @@ Supported commands:
 - /ping
 - /status
 - /mode passive|active
+- /profile peek|audit
 - /interface <iface>|auto
 - /subnet <cidr>|auto
 - /tasks
@@ -25,6 +26,7 @@ HELP = "\n".join([
     "/ping",
     "/status",
     "/mode passive|active",
+    "/profile peek|audit",
     "/interface <iface>|auto",
     "/subnet <cidr>|auto",
     "/tasks",
@@ -168,6 +170,15 @@ def process(cfg, state: dict, available_tasks: List[str]) -> dict:
                 _send(token, chat_id, f"mode set to {overrides['mode']}")
             else:
                 _send(token, chat_id, "usage: /mode passive|active")
+            continue
+
+        if cmd == "/profile":
+            if args and args[0].lower() in {"peek", "audit"}:
+                overrides["profile"] = args[0].lower()
+                actions["changed"] = True
+                _send(token, chat_id, f"profile set to {overrides['profile']}")
+            else:
+                _send(token, chat_id, "usage: /profile peek|audit")
             continue
 
         if cmd == "/interface":

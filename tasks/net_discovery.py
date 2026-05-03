@@ -7,9 +7,20 @@ import shutil
 import subprocess
 
 
-def run(net):
+def run(context):
     events = []
+    mode = context.get("mode", "passive")
+    net = context.get("net", {})
     subnet = net.get("subnet")
+
+    if mode != "active":
+        return [{
+            "type": "net_scan",
+            "severity": "info",
+            "message": "Host discovery skipped in passive mode",
+            "source": "net_discovery",
+        }]
+
     if not subnet:
         return [{"type": "net_scan", "severity": "warning", "message": "No subnet available", "source": "net_discovery"}]
 

@@ -5,6 +5,7 @@ QuickPeek is a modular network audit suite focused on operational simplicity:
 - modular tasks in `tasks/`
 - minimal dependencies
 - persistent runtime state and clear logs
+- safe `peek` profile for unfamiliar networks
 
 The design follows antirez-style principles: explicit control flow, small components, predictable behavior, easy debugging.
 
@@ -14,6 +15,7 @@ The design follows antirez-style principles: explicit control flow, small compon
 - Low-noise by default: informational findings unless policy is explicitly violated.
 - Policy-driven severity: warnings/critical only when configuration says behavior is forbidden.
 - Safe defaults: aggressive checks are opt-in.
+- Unknown networks use local-first observation: no subnet sweep unless `profile=audit` and `mode=active`.
 
 ## Project Layout
 
@@ -76,6 +78,7 @@ cp config.ini.template config.ini
 
 Recommended first run:
 - keep `mode=passive`
+- keep `profile=peek`
 - keep `Policy.*` values to `false`
 - review baseline output
 - then enable strict policy flags for your environment
@@ -90,10 +93,18 @@ Useful options:
 
 ```bash
 python3 net_audit.py --mode passive
+python3 net_audit.py --profile peek --mode passive
+python3 net_audit.py --profile audit --mode active
 python3 net_audit.py --mode active
 python3 net_audit.py --tasks dns,udp,health
 python3 net_audit.py --iface eth0 --subnet 192.168.1.0/24
 python3 net_audit.py --no-telegram
+```
+
+Run local tests:
+
+```bash
+sh tests/run_tests.sh
 ```
 
 ## Policy and False Positives
@@ -109,6 +120,16 @@ python3 net_audit.py --no-telegram
 
 If these flags are `false`, related findings stay informational to reduce false positives.
 
+## Safe Quick Peek
+
+`profile=peek` is the default for unknown or unexplored networks. It favors local evidence:
+- selected interface, IP, subnet, gateway
+- configured DNS resolvers
+- ARP/neighbor table size
+- passive packet/L2 indicators when local tools allow it
+
+It does not sweep the subnet. Broader checks belong in `profile=audit`, and active scan tasks are blocked when the detected subnet exceeds `Safety.max_scan_hosts` unless `Safety.allow_large_scan=true`.
+
 ## Telegram Bot Commands
 
 Supported commands:
@@ -116,6 +137,7 @@ Supported commands:
 - `/ping`
 - `/status`
 - `/mode passive|active`
+- `/profile peek|audit`
 - `/interface eth0|auto`
 - `/subnet 192.168.1.0/24|auto`
 - `/tasks`

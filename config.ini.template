@@ -9,6 +9,9 @@ local_subnet =
 gateway =
 # passive | active
 mode = passive
+# peek = safe local-first unknown-network snapshot
+# audit = full configured task set for authorized environments
+profile = peek
 # One or more targets (comma-separated). First one is used by most checks.
 target_external = 1.1.1.1,8.8.8.8
 # Generic timeout hint for custom tasks
@@ -42,6 +45,13 @@ enable_snmp_default_check = false
 # Comma-separated task module names from ./tasks
 # Legacy and v4 tasks can coexist.
 enabled = net,domain,dns,udp,presec,hygiene,health,net_discovery,passive_scan,dhcp_rogue,vlan_8021x,lldp_map,mitm_detect,tor,tldcheck,streaming,dns_tunnelling,check_network_doh_dot_policy
+# Safe default for unknown or unexplored networks. No subnet sweep.
+peek_enabled = quickpeek,net,hygiene,mitm_detect,lldp_map,passive_scan,vlan_8021x
+
+[Safety]
+# Active scan tasks are blocked above this address count unless allow_large_scan=true.
+max_scan_hosts = 256
+allow_large_scan = false
 
 [Scan]
 # Task PRESEC / NET scan hints
