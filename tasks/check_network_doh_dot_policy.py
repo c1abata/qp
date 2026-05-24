@@ -43,8 +43,7 @@ def _doh_check(url: str) -> bool:
         return False
 
 
-def run(net):
-    # net-only signature; policy is unknown here, so keep informational.
+def _probe_events() -> list[dict]:
     events = []
 
     dot_ok = _dot_check("1.1.1.1", "one.one.one.one")
@@ -64,13 +63,10 @@ def run(net):
     return events
 
 
-def run_with_policy(cfg, net):
-    """Optional richer entrypoint for future orchestration.
-
-    If policy forbids encrypted DNS, reachable DoH/DoT becomes warning.
-    """
-    events = run(net)
-    forbid = _policy_bool(cfg, "doh_dot_forbidden", default=False)
+def run(context):
+    cfg = context.get("cfg")
+    events = _probe_events()
+    forbid = _policy_bool(cfg, "doh_dot_forbidden", default=False) if cfg else False
     if not forbid:
         return events
     for event in events:

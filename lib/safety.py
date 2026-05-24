@@ -20,6 +20,7 @@ LOCAL_PASSIVE_TASKS = {
     "hygiene",
     "mitm_detect",
     "lldp_map",
+    "rstp",
     "passive_scan",
     "vlan_8021x",
 }

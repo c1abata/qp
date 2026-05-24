@@ -44,9 +44,9 @@ enable_snmp_default_check = false
 [Tasks]
 # Comma-separated task module names from ./tasks
 # Legacy and v4 tasks can coexist.
-enabled = net,domain,dns,udp,presec,hygiene,health,net_discovery,passive_scan,dhcp_rogue,vlan_8021x,lldp_map,mitm_detect,tor,tldcheck,streaming,dns_tunnelling,check_network_doh_dot_policy
+enabled = net,domain,dns,udp,presec,hygiene,health,net_discovery,passive_scan,dhcp_rogue,vlan_8021x,lldp_map,rstp,mitm_detect,tor,tldcheck,streaming,dns_tunnelling,check_network_doh_dot_policy
 # Safe default for unknown or unexplored networks. No subnet sweep.
-peek_enabled = quickpeek,net,hygiene,mitm_detect,lldp_map,passive_scan,vlan_8021x
+peek_enabled = quickpeek,net,hygiene,mitm_detect,lldp_map,rstp,passive_scan,vlan_8021x
 
 [Safety]
 # Active scan tasks are blocked above this address count unless allow_large_scan=true.
@@ -55,8 +55,9 @@ allow_large_scan = false
 
 [Scan]
 # Task PRESEC / NET scan hints
-tcp_service_ports = 1-1024,8080,8443,8181,3389,4444,8001,8010,5985,3000,666,5678,44380,44322,5872,3600,500,5900
-udp_port_ranges = 1-1024,40000-60000
+tcp_service_ports = 1-1024,8080,8443,8181,8189,3389,4444,8001,8010,5985,3000,666,5678,10011,30033,44380,44322,5872,3600,500,5900
+udp_port_ranges = 1-1024,9987,40000-60000
+egress_tcp_ports = 22,25,80,443,8189,10011,30033
 
 [DNS]
 test_hostname = example.com

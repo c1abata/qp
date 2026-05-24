@@ -5,10 +5,10 @@ from lib import safety
 def test_peek_profile_filters_to_allowed_tasks():
     selected = safety.select_tasks(
         "peek",
-        ["quickpeek", "net_discovery", "tor", "net"],
-        ["quickpeek", "net"],
+        ["quickpeek", "net_discovery", "tor", "net", "rstp"],
+        ["quickpeek", "net", "rstp"],
     )
-    assert selected == ["quickpeek", "net"]
+    assert selected == ["quickpeek", "net", "rstp"]
 
 
 def test_active_scan_blocks_large_private_subnet():

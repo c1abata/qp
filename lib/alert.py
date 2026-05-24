@@ -47,18 +47,19 @@ class Alerter:
     def ok(self, area: str, message: str) -> None:
         self.send(f"{LEVEL_ICON['ok']} [{area}] {message}", level="ok")
 
-    def send(self, message: str, level: str = "info") -> None:
+    def send(self, message: str, level: str = "info") -> bool:
         if message in self._sent_cache:
-            return
+            return False
         self._sent_cache.add(message)
 
         if self.enabled and self._telegram_send(message):
-            return
+            return True
 
         if self.enabled:
             self._enqueue(message)
         if self.bt:
             self._bluetooth_send(message)
+        return False
 
     def dispatch_events(self, events: Iterable[dict]) -> None:
         send_info = self.cfg.get("Alerts", "send_info", fallback="false").strip().lower() in {"1", "true", "yes", "on"}
@@ -66,8 +67,15 @@ class Alerter:
         send_critical = self.cfg.get("Alerts", "send_critical", fallback="true").strip().lower() in {"1", "true", "yes", "on"}
 
         lines: List[str] = []
+        bt_lines: List[str] = []
         for event in events:
             sev = str(event.get("severity", "warning")).lower()
+            icon = LEVEL_ICON.get(sev, "[*]")
+            msg = str(event.get("message", "")).strip()
+            src = str(event.get("source", "core")).strip()
+            if event.get("type") in {"no_gateway", "quickpeek_no_gateway"}:
+                bt_lines.append(f"{icon} [{src}] {msg}")
+
             if sev == "info" and not send_info:
                 continue
             if sev == "warning" and not send_warning:
@@ -76,17 +84,17 @@ class Alerter:
                 continue
             if sev not in {"info", "warning", "critical", "error"}:
                 continue
-            icon = LEVEL_ICON.get(sev, "[*]")
-            msg = str(event.get("message", "")).strip()
-            src = str(event.get("source", "core")).strip()
             lines.append(f"{icon} [{src}] {msg}")
 
-        if not lines:
-            return
+        telegram_delivered = False
 
-        header = "QuickPeek alerts"
-        payload = header + "\n" + "\n".join(lines[:30])
-        self.send(payload, level="warning")
+        if lines:
+            header = "QuickPeek alerts"
+            payload = header + "\n" + "\n".join(lines[:30])
+            telegram_delivered = self.send(payload, level="warning")
+
+        if self.bt and bt_lines and (telegram_delivered or not lines):
+            self._bluetooth_send("QuickPeek gateway alert\n" + "\n".join(bt_lines[:10]))
 
     def fetch_mode_override(self, default_mode: str = "passive") -> str:
         """Backward-compatible mode resolver.

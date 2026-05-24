@@ -1,5 +1,5 @@
 [Unit]
-Description=Net Audit Suite v3 — triggered on network link up
+Description=QuickPeek network audit
 After=network-online.target
 Wants=network-online.target
 BindsTo=network-online.target
@@ -7,12 +7,12 @@ BindsTo=network-online.target
 [Service]
 Type=oneshot
 User=root
-ExecStart=/usr/bin/python3 /opt/net_audit/net_audit.py --config /opt/net_audit/config.ini
+ExecStart=/usr/bin/python3 /opt/quickpeek/net_audit.py --config /opt/quickpeek/config.ini
 Restart=no
 TimeoutStartSec=900
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=net_audit
+SyslogIdentifier=quickpeek
 NoNewPrivileges=no
 PrivateTmp=yes
 

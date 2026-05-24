@@ -9,6 +9,7 @@ Fallback out-of-band.
 import subprocess
 import tempfile
 import logging
+import os
 
 log = logging.getLogger(__name__)
 
@@ -24,13 +25,13 @@ class BluetoothAlerter:
         if not self.mac:
             return False
 
+        path = ""
         try:
-            # 1. Scrive messaggio su file temporaneo
-            with tempfile.NamedTemporaryFile(delete=False, mode="w") as f:
+            # OBEX expects a real file path, so use a named temp file and remove it after send.
+            with tempfile.NamedTemporaryFile(delete=False, mode="w", encoding="utf-8") as f:
                 f.write(message)
                 path = f.name
 
-            # 2. Tentativo connessione (best effort)
             subprocess.run(
                 ["bluetoothctl", "connect", self.mac],
                 stdout=subprocess.DEVNULL,
@@ -38,8 +39,7 @@ class BluetoothAlerter:
                 timeout=5
             )
 
-            # 3. Invio file via OBEX
-            subprocess.run(
+            proc = subprocess.run(
                 [
                     "obexftp",
                     "--nopath",
@@ -53,10 +53,19 @@ class BluetoothAlerter:
                 timeout=10
             )
 
-            log.info(f"BT send TO {self.mac}")
+            if proc.returncode != 0:
+                log.warning("BT send failed: obexftp exit code %s", proc.returncode)
+                return False
+
+            log.info("BT send TO %s", self.mac)
             return True
 
         except Exception as e:
-            log.warning(f"BT send failed: {e}")
+            log.warning("BT send failed: %s", e)
             return False
-        
+        finally:
+            if path:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass

@@ -47,6 +47,7 @@ qp/
     ├── dhcp_rogue.py
     ├── vlan_8021x.py
     ├── lldp_map.py
+    ├── rstp.py
     ├── mitm_detect.py
     ├── tor.py
     ├── tldcheck.py
@@ -89,6 +90,8 @@ Recommended first run:
 python3 net_audit.py --config ./config.ini
 ```
 
+For a system install, see [GUIDE.md](GUIDE.md).
+
 Useful options:
 
 ```bash
@@ -117,6 +120,11 @@ sh tests/run_tests.sh
 : warns when DoH/DoT is reachable.
 - `enable_snmp_default_check = true`
 : enables active SNMP default community checks (opt-in).
+
+`[Scan]` exposes operator-editable port sets used by active checks:
+- `tcp_service_ports` covers LAN service discovery, including TeamSpeak TCP ports `10011` and `30033`, `8189`, and `5678`.
+- `udp_port_ranges` covers UDP checks, including TeamSpeak voice port `9987`.
+- `egress_tcp_ports` controls the small external TCP reachability probe.
 
 If these flags are `false`, related findings stay informational to reduce false positives.
 

@@ -82,7 +82,7 @@ def run(context):
 
     if gateway == "unknown":
         events.append({
-            "type": "quickpeek_no_gateway",
+            "type": "no_gateway",
             "severity": "warning",
             "message": "No default gateway detected",
             "source": "quickpeek",

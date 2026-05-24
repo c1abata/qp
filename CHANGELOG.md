@@ -20,12 +20,17 @@
   - `dns_plaintext_forbidden`
   - `doh_dot_forbidden`
   - `enable_snmp_default_check`
+- Added passive STP/RSTP BPDU observation.
+- Added configurable TeamSpeak, `8189`, and `5678` scan coverage.
+- Enforced DoH/DoT policy severity in the policy task.
 
 ### Operations
 - Runtime artifacts standardized under `/var/log/net_audit` with fallback to `qp/runtime`.
 - Alert dispatch now honors `[Alerts]` severity switches.
 - Telegram control commands improved with persistent overrides.
+- No-gateway events now trigger a dedicated Bluetooth notification when configured.
 
 ### Documentation
 - Updated `README.md` with policy-driven operation, anti-false-positive guidance,
   Telegram troubleshooting, and stable release workflow.
+- Added `GUIDE.md` with minimal install, service, validation, and upgrade steps.

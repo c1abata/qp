@@ -61,6 +61,9 @@ def _ensure_sections(cfg: configparser.ConfigParser) -> None:
         ("Policy", "dns_plaintext_forbidden"): "false",
         ("Policy", "doh_dot_forbidden"): "false",
         ("Policy", "enable_snmp_default_check"): "false",
+        ("Scan", "tcp_service_ports"): "1-1024,8080,8443,8181,8189,3389,4444,8001,8010,5985,3000,666,5678,10011,30033,44380,44322,5872,3600,500,5900",
+        ("Scan", "udp_port_ranges"): "1-1024,9987,40000-60000",
+        ("Scan", "egress_tcp_ports"): "22,25,80,443,8189,10011,30033",
         ("Safety", "max_scan_hosts"): "256",
         ("Safety", "allow_large_scan"): "false",
     }
@@ -217,6 +220,14 @@ def main() -> int:
             "severity": "warning",
             "message": err,
             "source": "taskloader",
+        })
+
+    if not net.get("gateway"):
+        events.append({
+            "type": "no_gateway",
+            "severity": "warning",
+            "message": "No default gateway detected",
+            "source": "core",
         })
 
     for task_name, module in loaded_tasks:

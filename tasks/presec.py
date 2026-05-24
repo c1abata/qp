@@ -11,8 +11,12 @@ import shutil
 import socket
 import subprocess
 
+from lib.ports import nmap_port_arg, parse_port_spec
+
 
 AREA = "PRESEC"
+DEFAULT_EGRESS_TCP_PORTS = "22,25,80,443,8189,10011,30033"
+DEFAULT_LAN_TCP_PORTS = "22,23,445,3389,5900,8080,8443,8189,10011,30033"
 
 
 def _run(cmd: list[str], timeout: int = 20) -> str:
@@ -55,7 +59,7 @@ def check_egress_tcp(cfg, out_dir, alerter):
     findings = []
 
     target = cfg.get("General", "target_external", fallback="1.1.1.1").split(",")[0].strip()
-    ports = [80, 443, 22, 25]
+    ports = parse_port_spec(cfg.get("Scan", "egress_tcp_ports", fallback=""), fallback=DEFAULT_EGRESS_TCP_PORTS)
 
     lines = []
     open_ports = []
@@ -95,13 +99,17 @@ def check_lan_management_surface(cfg, out_dir, alerter):
     if not shutil.which("nmap"):
         return findings
 
+    ports = nmap_port_arg(cfg.get("Scan", "tcp_service_ports", fallback=""), fallback=DEFAULT_LAN_TCP_PORTS)
+    if not ports:
+        return findings
+
     out = _run(
         [
             "nmap",
             "-n",
             "-T2",
             "-p",
-            "22,23,445,3389,5900,8080,8443",
+            ports,
             "--open",
             "--max-retries=1",
             "--host-timeout=20s",

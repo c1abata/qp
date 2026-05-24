@@ -7,8 +7,11 @@ import re
 import shutil
 import subprocess
 
+from lib.ports import nmap_port_arg
+
 
 AREA = "UDP"
+DEFAULT_UDP_PORTS = "53,67,123,161,500,4500,1194,9987"
 
 
 def _run(cmd: list[str], timeout: int = 15) -> str:
@@ -84,6 +87,10 @@ def check_udp_surface(cfg, out_dir, alerter):
         return findings
 
     target = cfg.get("General", "target_external", fallback="1.1.1.1").split(",")[0].strip()
+    ports = nmap_port_arg(cfg.get("Scan", "udp_port_ranges", fallback=""), fallback=DEFAULT_UDP_PORTS)
+    if not ports:
+        return findings
+
     out = _run(
         [
             "nmap",
@@ -91,7 +98,7 @@ def check_udp_surface(cfg, out_dir, alerter):
             "-n",
             "-T2",
             "-p",
-            "53,67,123,161,500,4500,1194",
+            ports,
             "--max-retries=1",
             "--host-timeout=20s",
             target,

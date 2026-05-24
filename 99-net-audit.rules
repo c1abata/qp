@@ -1,9 +1,8 @@
 # /etc/udev/rules.d/99-net-audit.rules
-# Avvia net_audit quando un cavo Ethernet viene collegato
-# e l'interfaccia sale a "up" con carrier.
+# Start QuickPeek when an Ethernet link appears or carrier becomes active.
 #
-# Funziona su: eth0, eth1, enp*, ens* (qualsiasi eth fisico)
-# Non si attiva su: loopback (lo), bridge, vlan, wlan
+# Works on physical Ethernet-style names such as eth*, enp*, ens*.
+# Does not trigger on loopback, bridge, VLAN, or WLAN interfaces.
 
 ACTION=="add", SUBSYSTEM=="net", \
   KERNEL!="lo", KERNEL!="br*", KERNEL!="vlan*", KERNEL!="wlan*", \

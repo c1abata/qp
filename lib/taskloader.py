@@ -26,6 +26,7 @@ DEFAULT_TASKS = [
     "dhcp_rogue",
     "vlan_8021x",
     "lldp_map",
+    "rstp",
     "mitm_detect",
     "tor",
     "tldcheck",
@@ -40,6 +41,7 @@ PEEK_TASKS = [
     "hygiene",
     "mitm_detect",
     "lldp_map",
+    "rstp",
     "passive_scan",
     "vlan_8021x",
 ]
